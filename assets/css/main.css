@@ -24,14 +24,14 @@
   --cyan-dark:     #0891B2;
   
   /* SaaS Gradients */
-  --grad-primary:  linear-gradient(135deg, #3B82F6 0%, #8B5CF6 100%);
-  --grad-cyan:     linear-gradient(135deg, #06B6D4 0%, #3B82F6 100%);
-  --grad-light:    linear-gradient(135deg, rgba(219, 234, 254, 0.5) 0%, rgba(243, 232, 255, 0.4) 100%);
+  --grad-primary:  linear-gradient(135deg, #1E3A8A 0%, #06B6D4 100%);
+  --grad-cyan:     linear-gradient(135deg, #06B6D4 0%, #1E3A8A 100%);
+  --grad-light:    linear-gradient(135deg, rgba(207, 250, 254, 0.5) 0%, rgba(219, 234, 254, 0.4) 100%);
 
   /* Navy / Buttons */
   --navy:          #1E3A8A;
-  --navy-light:    #3B82F6;
-  --navy-dark:     #1E40AF;
+  --navy-light:    #06B6D4;
+  --navy-dark:     #172554;
 
   /* Status */
   --red:           #EF4444;
@@ -167,7 +167,7 @@ input, select, textarea { font-family: inherit; }
 }
 .header-nav a.active {
   background: #ffffff;
-  color: #3B82F6;
+  color: var(--navy);
   box-shadow: var(--shadow-sm);
 }
 .header-actions {
@@ -190,7 +190,7 @@ input, select, textarea { font-family: inherit; }
 .status-dot {
   width: 6px; height: 6px;
   border-radius: 50%;
-  background: #3B82F6;
+  background: var(--cyan);
 }
 .btn-header-login {
   padding: 9px 20px;
@@ -320,10 +320,10 @@ input, select, textarea { font-family: inherit; }
   color: #fff;
 }
 .timeline-dot.current {
-  background: #3B82F6;
-  border-color: #3B82F6;
+  background: var(--cyan);
+  border-color: var(--cyan);
   color: #fff;
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.2);
+  box-shadow: 0 0 0 4px rgba(6, 182, 212, 0.2);
 }
 .timeline-time { font-size: 11px; color: var(--text-muted); }
 .timeline-title { font-size: 13.5px; font-weight: 700; margin-top: 2px; }
@@ -350,8 +350,8 @@ input, select, textarea { font-family: inherit; }
 }
 .form-input:focus {
   outline: none;
-  border-color: #3B82F6;
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 4px rgba(6, 182, 212, 0.1);
 }
 .form-select {
   appearance: none;
@@ -598,10 +598,10 @@ input, select, textarea { font-family: inherit; }
   font-size: 12px; font-weight: 700; color: var(--text-muted);
 }
 .wizard-step-dot.active {
-  border-color: #3B82F6;
-  background: #3B82F6;
+  border-color: var(--cyan);
+  background: var(--cyan);
   color: #fff;
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15);
+  box-shadow: 0 0 0 4px rgba(6, 182, 212, 0.15);
 }
 .wizard-step-dot.done {
   background: #10B981;
@@ -770,4 +770,62 @@ input, select, textarea { font-family: inherit; }
   background-color: #FAFDFE !important;
   transform: scale(1.01);
 }
+
+/* ── CUSTOM RANGE SLIDER OVERRIDES ───────────── */
+input[type="range"] {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 6px;
+  background: #E2E8F0;
+  border-radius: 9999px;
+  outline: none;
+  margin: 12px 0;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--cyan);
+  cursor: pointer;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.2s;
+  box-shadow: 0 0 12px rgba(6, 182, 212, 0.4);
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.25);
+  background: var(--navy);
+}
+
+/* ── PREMIUM GLASS CARD & LOGINS ─────────────── */
+.login-card {
+  background: rgba(255, 255, 255, 0.85) !important;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  box-shadow: 0 20px 50px -12px rgba(15, 23, 42, 0.15) !important;
+  transition: box-shadow 0.3s ease;
+}
+
+/* ── TABLE OVERRIDES FOR SAAS AESTHETIC ───────── */
+.data-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13.5px;
+}
+
+.data-table thead th {
+  padding: 14px 20px;
+  color: var(--text-secondary);
+  background: #F8FAFC;
+  border-bottom: 1.5px solid #E2E8F0;
+}
+
+.data-table tbody td {
+  padding: 16px 20px;
+  border-bottom: 1px solid #F1F5F9;
+}
+
 
