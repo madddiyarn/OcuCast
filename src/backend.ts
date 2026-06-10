@@ -23,7 +23,7 @@ export function checkCatchLimits(species: FishSpecies, weight: number, gyroAngle
   if (isVoblaExceeded) {
     return {
       success: false,
-      text: `❌ AntiGravity: Verification Exception\n ✗ Biological maximum limit exceeded: ${weight} kg (limit: ≤ 3.0 kg)\n ✗ Typical species weight anomaly flagged.\n ✓ Camera inclination angle: ${gyroAngle}° (limit: ≤ 45°)\n ✓ Minimum check mass: ${weight} kg (limit: ≥ 0.1 kg)`,
+      text: `❌ Verification Exception\n ✗ Biological maximum limit exceeded: ${weight} kg (limit: ≤ 3.0 kg)\n ✗ Typical species weight anomaly flagged.\n ✓ Camera inclination angle: ${gyroAngle}° (limit: ≤ 45°)\n ✓ Minimum check mass: ${weight} kg (limit: ≥ 0.1 kg)`,
       mismatchFlag: true,
       status: "Suspicious"
     };
@@ -41,7 +41,7 @@ export function checkCatchLimits(species: FishSpecies, weight: number, gyroAngle
   if (!bioOk || !gyroOk || !minOk) {
     return {
       success: false,
-      text: `❌ AntiGravity: Verification Exception\n${bioOk ? '✓' : '✗'} Biological maximum limit: ${weight} kg (limit: ≤ ${limit} kg)\n${gyroOk ? '✓' : '✗'} Camera inclination angle: ${gyroAngle}° (limit: ≤ 45°)\n${minOk ? '✓' : '✗'} Minimum check mass: ${weight} kg (limit: ≥ 0.1 kg)`,
+      text: `❌ Verification Exception\n${bioOk ? '✓' : '✗'} Biological maximum limit: ${weight} kg (limit: ≤ ${limit} kg)\n${gyroOk ? '✓' : '✗'} Camera inclination angle: ${gyroAngle}° (limit: ≤ 45°)\n${minOk ? '✓' : '✗'} Minimum check mass: ${weight} kg (limit: ≥ 0.1 kg)`,
       mismatchFlag: false,
       status: "Blocked"
     };

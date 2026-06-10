@@ -836,8 +836,11 @@ function FishermanPage(): HTMLElement {
           <div style="font-size:12.5px; display:flex; justify-content:space-between; margin-bottom:6px;">
             <span>Retina Freshness Index:</span> <strong style="color: #10B981;">97.2% (Fresh)</strong>
           </div>
-          <div style="font-size:12.5px; display:flex; justify-content:space-between;">
+          <div style="font-size:12.5px; display:flex; justify-content:space-between; margin-bottom:6px;">
             <span>Ecosystem Health Check:</span> <strong style="color: #06B6D4;">No contaminants detected</strong>
+          </div>
+          <div style="font-size:11px; color: #64748B; font-style: italic; margin-top: 8px; border-top: 1px dashed #E2E8F0; padding-top: 6px;">
+            💡 Demo Mode: Hand gestures/likes are recognized by the AI model as Carp.
           </div>
         </div>
       `;
@@ -846,7 +849,7 @@ function FishermanPage(): HTMLElement {
       if (limitVerification.mismatchFlag) {
         innerResultHTML = `
           <div class="alert alert-amber" style="margin-bottom:20px; border-radius: 12px; display: block;">
-            <div style="font-weight: 800; font-size:14px; margin-bottom:6px;">⚠️ AntiGravity biological mismatch detected</div>
+            <div style="font-weight: 800; font-size:14px; margin-bottom:6px;">⚠️ Biological mismatch detected</div>
             <p style="font-size: 12.5px; margin-bottom: 12px; white-space: pre-wrap;">${limitVerification.text}</p>
             <button id="btn-escalate-inspector" class="btn btn-primary btn-sm" style="background:#1E3A8A; width: 100%;">Forward to Inspector for Manual Review</button>
           </div>
@@ -1399,7 +1402,7 @@ function AdminPage(): HTMLElement {
     const anomalousCatches = catches.filter(c => c.oilDetected === true || c.status === "Suspicious" || c.status === "Blocked");
 
     const tableRowsHtml = anomalousCatches.map(c => {
-      const factor = c.oilDetected ? "Oil Contamination" : "AntiGravity Biological Mismatch";
+      const factor = c.oilDetected ? "Oil Contamination" : "Biological Mismatch";
       return `
         <tr class="anomaly-row" data-id="${c.id}" style="cursor: pointer; transition: background 0.2s;">
           <td style="font-weight: 800; color: #1E3A8A;">${c.id} ${selectedAnomalyId === c.id ? '▶' : ''}</td>
@@ -1593,7 +1596,7 @@ function AdminPage(): HTMLElement {
         catches.forEach(c => {
           if (c.oilDetected || c.status === "Suspicious" || c.status === "Blocked") {
             const color = c.status === 'Blocked' ? "#EF4444" : c.oilDetected ? "#EF4444" : "#F59E0B";
-            const anomalyLabel = c.status === 'Blocked' ? "Illegal Transshipment Blocked" : c.oilDetected ? "Oil Spill Contamination" : "AntiGravity Anomaly";
+            const anomalyLabel = c.status === 'Blocked' ? "Illegal Transshipment Blocked" : c.oilDetected ? "Oil Spill Contamination" : "Biological Anomaly";
 
             const customIcon = L.divIcon({
               html: `<div style="width: 14px; height: 14px; background-color: ${color}; border: 2px solid white; border-radius: 50%; box-shadow: 0 0 8px ${color};"></div>`,
