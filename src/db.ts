@@ -46,7 +46,15 @@ export const DB = {
     try {
       const catchesRes = await fetch(`${API_BASE}/catches`);
       if (catchesRes.ok) {
-        this.catches = await catchesRes.json();
+        const rawCatches = await catchesRes.json();
+        this.catches = rawCatches.map((c: any) => ({
+          ...c,
+          weight: parseFloat(c.weight_kg),
+          locationName: c.gps_label,
+          coordinates: [parseFloat(c.gps_lat), parseFloat(c.gps_lng)],
+          freshnessIndex: c.freshness_index,
+          oilDetected: !!c.oil_detected
+        }));
       }
       const fishermenRes = await fetch(`${API_BASE}/fishermen`);
       if (fishermenRes.ok) {
@@ -72,20 +80,19 @@ export const DB = {
           weight: parseFloat(x.weight),
           description: x.reason,
           status: x.status,
-          sent_to_moderator: x.sent_to_moderator
+          sent_to_moderator: x.sent_to_moderator,
+          resolved: x.status === 'approved_manually'
         }));
       }
     } catch (e) {
       console.warn('Postgres connection failed. Fallback to LocalStorage ledger and static data.');
       
-      // Fallback fishermen
       this.fishermen = [
         { id: 'fisher1', name: 'Капитан Ivanov', vessel: 'ТМ-081', status: 'approved', greenScore: 98, login: 'fisher1', password: 'demo' },
         { id: 'fisher2', name: 'Болат Жунисов', vessel: 'Мангистау', status: 'pending', greenScore: 71, login: 'fisher2', password: 'demo' },
         { id: 'fisher3', name: 'Серік Аблаев', vessel: 'Ак-Жол', status: 'approved', greenScore: 88, login: 'fisher3', password: 'demo' }
       ];
 
-      // Fallback catches
       this.catches = [
         {
           id: 'OC-2026-000184',
@@ -94,13 +101,18 @@ export const DB = {
           species: 'Вобла',
           species_en: 'roach',
           weight_kg: 11.8,
+          weight: 11.8,
           verified: true,
           hardware_verified: true,
           timestamp: '2026-06-10T07:32:14Z',
           gps_lat: 43.6521,
           gps_lng: 51.1753,
+          locationName: 'Актау, Каспийское море',
           gps_label: 'Актау, Каспийское море',
+          coordinates: [43.6521, 51.1753],
+          freshnessIndex: 96,
           freshness_index: 96,
+          oilDetected: false,
           oil_detected: false,
           price_per_kg: 1200,
           quota_share_used: true,
@@ -113,12 +125,43 @@ export const DB = {
             { stage: 'factory', label: '🏭 Завод (-4°C Guard)', done: true, time: '2026-06-10T11:40:00Z', inspector: 'Дамир Нурмагамбетов', temp: -4, multisig: 'confirmed' },
             { stage: 'retail', label: '🛒 Ритейл в Актау', done: false, time: null, inspector: null, temp: null, multisig: null }
           ]
+        },
+        {
+          id: 'OC-2026-000201',
+          fisherman_id: 'fisher3',
+          vessel: 'Ак-Жол',
+          species: 'Сазан',
+          species_en: 'carp',
+          weight_kg: 6.2,
+          weight: 6.2,
+          verified: true,
+          hardware_verified: true,
+          timestamp: '2026-06-10T09:12:00Z',
+          gps_lat: 44.1234,
+          gps_lng: 50.8876,
+          locationName: 'Баутино, Мангистау',
+          gps_label: 'Баутино, Мангистау',
+          coordinates: [44.1234, 50.8876],
+          freshnessIndex: 99,
+          freshness_index: 99,
+          oilDetected: false,
+          oil_detected: false,
+          price_per_kg: 950,
+          quota_share_used: false,
+          quota_share_partner_vessel: null,
+          quota_share_partner_name: null,
+          hash: 'sha256:b4g9c3d2e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1',
+          supply_chain: [
+            { stage: 'sea', label: '⚓ Море (Вылов)', done: true, time: '2026-06-10T09:12:00Z', inspector: 'GPS автофиксация', temp: null, multisig: 'auto' },
+            { stage: 'port', label: '🏗️ Порт Курык', done: false, time: null, inspector: null, temp: null, multisig: null },
+            { stage: 'factory', label: '🏭 Завод', done: false, time: null, inspector: null, temp: null, multisig: null },
+            { stage: 'retail', label: '🛒 Ритейл', done: false, time: null, inspector: null, temp: null, multisig: null }
+          ]
         }
       ];
 
-      // Fallback antifrod logs
       this.antifrodLog = [
-        { id: 'AF-0041', timestamp: '2026-06-10T06:12:00Z', vessel: 'ТМ-081', species: 'roach', weight: 4.6, description: 'Превышен биологический максимум (>3 кг)', status: 'blocked', sent_to_moderator: false }
+        { id: 'AF-0041', timestamp: '2026-06-10T06:12:00Z', vessel: 'ТМ-081', species: 'roach', weight: 4.6, description: 'Превышен биологический максимум (>3 кг)', status: 'blocked', sent_to_moderator: false, resolved: false }
       ];
     }
   }

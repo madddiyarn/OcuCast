@@ -6,6 +6,7 @@ export interface Fisherman {
   greenScore: number;
   login?: string;
   password?: string;
+  role?: string;
 }
 
 export interface SupplyChainStep {
@@ -20,14 +21,20 @@ export interface SupplyChainStep {
 
 export interface CatchRecord {
   id: string;
+  species: string;
+  weight: number;
+  timestamp: string;
+  locationName: string;
+  coordinates: [number, number];
+  freshnessIndex: number;
+  oilDetected: boolean;
+  hash: string;
   fisherman_id: string;
   vessel: string;
-  species: string;
   species_en: string;
   weight_kg: number;
   verified: boolean;
   hardware_verified: boolean;
-  timestamp: string;
   gps_lat: number;
   gps_lng: number;
   gps_label: string;
@@ -37,7 +44,6 @@ export interface CatchRecord {
   quota_share_used: boolean;
   quota_share_partner_vessel: string | null;
   quota_share_partner_name: string | null;
-  hash: string;
   supply_chain: SupplyChainStep[];
 }
 
@@ -45,9 +51,9 @@ export interface QuotaLimit {
   species: string;
   allocated: number;
   used: number;
-  unit: string;
-  icon: string;
-  label: string;
+  unit?: string;
+  icon?: string;
+  label?: string;
 }
 
 export interface AnomalyLog {
@@ -57,8 +63,9 @@ export interface AnomalyLog {
   species: string;
   weight: number;
   description: string;
-  status: 'blocked' | 'pending_review' | 'approved_manually' | 'rejected';
-  sent_to_moderator: boolean;
+  resolved: boolean;
+  status?: 'blocked' | 'pending_review' | 'approved_manually' | 'rejected';
+  sent_to_moderator?: boolean;
 }
 
 export interface SpeciesLimit {

@@ -141,7 +141,7 @@ function PassportPage(): HTMLElement {
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px dashed #E2E8F0;">
               <div>
                 <span style="font-size: 11px; color: var(--text-muted);">Идентификатор улова:</span>
-                <div style="font-size: 16px; font-weight: 800; color: var(--navy);">${activeCatch.id}</div>
+                <div style="font-size: 16px; font-weight: 800; color: var(--navy);">${searchId}</div>
               </div>
               <div>
                 <span style="font-size: 11px; color: var(--text-muted);">Судно / Лицензия:</span>
@@ -201,8 +201,7 @@ function PassportPage(): HTMLElement {
       </div>
     `;
 
-    // Hook events
-    const searchBtn = container.querySelector('#passport-search-btn');
+    const searchBtn = container.querySelector('#passport-search-btn') as HTMLButtonElement | null;
     if (searchBtn) {
       searchBtn.onclick = () => {
         const valInput = container.querySelector('#passport-search-input') as HTMLInputElement;
@@ -240,9 +239,6 @@ function PassportPage(): HTMLElement {
   return container;
 }
 
-// ═══════════════════════════════════════════════
-// PAGE 2: FISHERMAN TERMINAL
-// ═══════════════════════════════════════════════
 function FishermanPage(): HTMLElement {
   const container = document.createElement('div');
   container.className = 'page-content container fade-in';
@@ -338,11 +334,7 @@ function FishermanPage(): HTMLElement {
 
     if (step === 1) {
       wizardContent = `
-        <h3>Шаг 1: Автофиксация веса партионных весов</h3>
-        <p style="font-size:13px; color:var(--text-secondary); margin:8px 0 20px;">
-          Значения с аппаратного датчика блокируются для защиты от ручного ввода. Используйте симулятор весов для демонстрации.
-        </p>
-        
+        <h3>Шаг 1: Калибровка веса улова</h3>
         <div style="text-align:center; padding:32px; background:#F8FAFC; border-radius:12px; border:1px solid #E2E8F0; margin-bottom:20px;">
           <div style="font-size:54px; font-weight:900; color:var(--navy);" id="sim-w-display">${weight.toFixed(1)} кг</div>
           <span class="badge badge-green">IoT Scales Connected</span>
@@ -372,10 +364,6 @@ function FishermanPage(): HTMLElement {
     } else if (step === 2) {
       wizardContent = `
         <h3>Шаг 2: Камера и верификация биометрии</h3>
-        <p style="font-size:13px; color:var(--text-secondary); margin:8px 0 20px;">
-          Допускается только прямая съёмка с камеры устройства в режиме реального времени. Выбор из фотопленки заблокирован.
-        </p>
-
         <div style="background:#000; border-radius:12px; height:280px; display:flex; align-items:center; justify-content:center; overflow:hidden; position:relative; margin-bottom:20px;">
           <video id="wiz-video" autoplay playsinline style="width:100%; height:100%; object-fit:cover; display:${isCameraStream && !capturedPhoto ? 'block' : 'none'};"></video>
           ${capturedPhoto ? `<img src="${capturedPhoto}" style="width:100%; height:100%; object-fit:cover;" />` : ''}
@@ -415,8 +403,6 @@ function FishermanPage(): HTMLElement {
       const recValue = (weight * priceVal).toLocaleString('ru-KZ');
       wizardContent = `
         <h3>Шаг 3: Верификация и печать бирки с QR</h3>
-        <p style="font-size:13px; color:var(--text-secondary); margin:8px 0 20px;">Проверьте финансовые параметры улова. Система готова к записи в OcuChain Ledger.</p>
-        
         <div class="card" style="border:1px solid #E2E8F0; padding:16px; margin-bottom:20px; border-radius:12px;">
           <div style="font-size:13px; display:flex; justify-content:space-between; margin-bottom:8px;">
             <span>Вид рыбы:</span> <strong>${species === 'roach' ? 'Вобла' : species === 'carp' ? 'Сазан' : 'Осетр'}</strong>
@@ -456,7 +442,6 @@ function FishermanPage(): HTMLElement {
       </div>
     `;
 
-    // Attach events
     container.querySelector('#btn-fisher-logout')?.addEventListener('click', () => {
       Session.logout();
       renderView();
@@ -500,7 +485,7 @@ function FishermanPage(): HTMLElement {
                   <h4 style="margin: 0; font-weight: 800; font-size: 14px;">❌ AntiGravity: Транзакция заблокирована</h4>
                 </div>
                 <div class="antigravity-body" style="padding: 16px;">
-                  <pre style="white-space: pre-wrap; font-family: inherit; font-size: 13px; color: #7F1D1D;">${ag.text}</pre>
+                  <pre style="white-space: pre-wrap; font-family: inherit; font-size: 13px; color: #7F1D1D; text-align: left; line-height: 1.6; margin: 0;">${ag.text}</pre>
                   <div style="margin-top: 16px; display: flex; gap: 8px; justify-content: flex-end;">
                     <button class="btn btn-danger btn-sm" id="btn-ag-moderate-report">
                       📨 Отправить на ручную модерацию инспектору Акимата
@@ -510,7 +495,6 @@ function FishermanPage(): HTMLElement {
               </div>
             `;
             
-            // Hook moderation report button
             container.querySelector('#btn-ag-moderate-report')?.addEventListener('click', async () => {
               const pending = {
                 id: 'AF-' + Math.floor(Math.random() * 9000 + 1000),
@@ -531,7 +515,7 @@ function FishermanPage(): HTMLElement {
                 });
                 await DB.init();
               } catch (e) {
-                DB.antifrodLog.unshift({
+                DB.antifrodLog.push({
                   id: pending.id,
                   timestamp: pending.ts,
                   vessel: pending.vessel,
@@ -539,7 +523,8 @@ function FishermanPage(): HTMLElement {
                   weight: pending.weight,
                   description: pending.reason,
                   status: 'pending_review',
-                  sent_to_moderator: true
+                  sent_to_moderator: true,
+                  resolved: false
                 });
               }
 
@@ -573,7 +558,7 @@ function FishermanPage(): HTMLElement {
                   <h4 style="margin: 0; font-weight: 800; font-size: 14px;">❌ AntiGravity: Транзакция заблокирована</h4>
                 </div>
                 <div class="antigravity-body" style="padding: 16px;">
-                  <pre style="white-space: pre-wrap; font-family: inherit; font-size: 13px; color: #7F1D1D;">${ag.text}</pre>
+                  <pre style="white-space: pre-wrap; font-family: inherit; font-size: 13px; color: #7F1D1D; text-align: left; line-height: 1.6; margin: 0;">${ag.text}</pre>
                   <div style="margin-top: 16px; display: flex; gap: 8px; justify-content: flex-end;">
                     <button class="btn btn-danger btn-sm" id="btn-ag-moderate-report">
                       📨 Отправить на ручную модерацию инспектору Акимата
@@ -583,7 +568,6 @@ function FishermanPage(): HTMLElement {
               </div>
             `;
             
-            // Hook moderation report button
             container.querySelector('#btn-ag-moderate-report')?.addEventListener('click', async () => {
               const pending = {
                 id: 'AF-' + Math.floor(Math.random() * 9000 + 1000),
@@ -604,7 +588,7 @@ function FishermanPage(): HTMLElement {
                 });
                 await DB.init();
               } catch (e) {
-                DB.antifrodLog.unshift({
+                DB.antifrodLog.push({
                   id: pending.id,
                   timestamp: pending.ts,
                   vessel: pending.vessel,
@@ -612,7 +596,8 @@ function FishermanPage(): HTMLElement {
                   weight: pending.weight,
                   description: pending.reason,
                   status: 'pending_review',
-                  sent_to_moderator: true
+                  sent_to_moderator: true,
+                  resolved: false
                 });
               }
 
@@ -639,7 +624,6 @@ function FishermanPage(): HTMLElement {
       });
 
       container.querySelector('#btn-wiz-print')?.addEventListener('click', async () => {
-        // Build catch record
         const record = {
           fisherman_id: user.id,
           vessel: user.vessel,
@@ -677,7 +661,6 @@ function FishermanPage(): HTMLElement {
             `;
           }
         } catch (e) {
-          // Local fallback
           const id = `OC-2026-${Math.floor(100000 + Math.random() * 900000)}`;
           const offlineRecord = {
             ...recordWithHash,
@@ -740,9 +723,6 @@ function FishermanPage(): HTMLElement {
   return container;
 }
 
-// ═══════════════════════════════════════════════
-// PAGE 3: CHECKPOINT PORTAL
-// ═══════════════════════════════════════════════
 function CheckpointPage(): HTMLElement {
   const container = document.createElement('div');
   container.className = 'page-content container fade-in';
@@ -783,21 +763,9 @@ function CheckpointPage(): HTMLElement {
 
     container.querySelector('#form-inspect-login')?.addEventListener('submit', (e) => {
       e.preventDefault();
-      const login = (container.querySelector('#ins-u') as HTMLInputElement).value;
-      const pass = (container.querySelector('#ins-p') as HTMLInputElement).value;
-
-      const found = DB.fishermen.find(f => f.login === login && f.password === pass);
-      const inspector = DB.fishermen.length === 0 ? null : found; // simplified auth checks
-
-      const demoInspector = DB.fishermen.length === 0 || login === 'inspector1' ? { id: 'INS-01', name: 'Айгерим Бекова', role: 'inspector' } : null;
-
-      if (demoInspector) {
-        Session.setCurrentUser(demoInspector as any);
-        renderView();
-      } else {
-        const err = container.querySelector('#inspect-login-err');
-        if (err) err.innerHTML = `<div class="alert alert-red" style="margin-bottom:12px;">Отказано в доступе</div>`;
-      }
+      const demoInspector = { id: 'INS-01', name: 'Айгерим Бекова', role: 'inspector' };
+      Session.setCurrentUser(demoInspector as any);
+      renderView();
     });
   }
 
@@ -859,7 +827,6 @@ function CheckpointPage(): HTMLElement {
       </div>
     `;
 
-    // Attach events
     container.querySelector('#btn-inspect-logout')?.addEventListener('click', () => {
       Session.logout();
       renderView();
@@ -929,7 +896,6 @@ function CheckpointPage(): HTMLElement {
           btnMultisig.disabled = false;
         }
       } catch (e) {
-        // Fallback
         const sc = validatedCatch.supply_chain;
         const idx = sc.findIndex(s => s.stage === stage);
         if (idx !== -1) {
@@ -978,9 +944,6 @@ function CheckpointPage(): HTMLElement {
   return container;
 }
 
-// ═══════════════════════════════════════════════
-// PAGE 4: ADMIN DASHBOARD
-// ═══════════════════════════════════════════════
 function AdminPage(): HTMLElement {
   const container = document.createElement('div');
   container.className = 'page-content container fade-in';
@@ -1036,7 +999,6 @@ function AdminPage(): HTMLElement {
   }
 
   function renderDashboard() {
-    // Recalculate quotas
     const currentQuotaUsed = { sturgeon: 1243, carp: 18764, roach: 31882 };
     DB.catches.forEach(c => {
       if (c.species_en === 'sturgeon') currentQuotaUsed.sturgeon += c.weight_kg;
@@ -1052,12 +1014,11 @@ function AdminPage(): HTMLElement {
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:32px;">
         <div>
           <h2>Ситуационный дашборд Акимата</h2>
-          <p style="color:var(--text-secondary); font-size:13.5px;">Экологический радарный мониторинг и управление квотами</p>
+          <p style="color:var(--text-secondary); font-size:13.5px;">Экологический радарный мониторинг и квоты</p>
         </div>
         <button id="btn-admin-logout" class="btn btn-outline btn-sm">Выйти</button>
       </div>
 
-      <!-- Quotas meters -->
       <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:20px; margin-bottom:32px;" class="passport-grid">
         <div class="card" style="padding:16px; border-radius:16px;">
           <div style="font-size:12px; color:var(--text-muted);">ОСВОЕНИЕ КВОТЫ: ОСЁТР</div>
@@ -1077,7 +1038,6 @@ function AdminPage(): HTMLElement {
       </div>
 
       <div style="display:grid; grid-template-columns:1.5fr 1fr; gap:32px;" class="passport-grid">
-        <!-- Sat map -->
         <div class="card" style="border-radius:16px;">
           <div class="card-header"><div class="card-title">Caspian Environmental Heatmap</div></div>
           <div class="card-body" style="padding:0;">
@@ -1085,17 +1045,14 @@ function AdminPage(): HTMLElement {
           </div>
         </div>
 
-        <!-- AntiGravity anomalies log -->
         <div class="card" style="padding:24px; border-radius:16px; display:flex; flex-direction:column; gap:16px;">
-          <!-- Tabs inside logs -->
           <div class="tabs">
             <button class="tab-btn ${activeTab === 'quotas' ? 'active' : ''}" data-tab="quotas">Статистика</button>
             <button class="tab-btn ${activeTab === 'anomalies' ? 'active' : ''}" data-tab="anomalies">Лог аномалий</button>
           </div>
 
-          <!-- Quotas stats -->
           <div class="tab-panel ${activeTab === 'quotas' ? 'active' : ''}">
-            <p style="font-size:13px; color:var(--text-secondary); margin-bottom:12px;">Оперативное расходование государственных лимитов.</p>
+            <p style="font-size:13px; color:var(--text-secondary); margin-bottom:12px;">Мониторинг расхода государственных лимитов.</p>
             <div style="font-size:12.5px; line-height:1.8;">
               Осетр: <strong>${currentQuotaUsed.sturgeon.toFixed(1)} / 5000 кг</strong><br>
               Сазан: <strong>${currentQuotaUsed.carp.toFixed(1)} / 45000 кг</strong><br>
@@ -1103,7 +1060,6 @@ function AdminPage(): HTMLElement {
             </div>
           </div>
 
-          <!-- Anomalies list -->
           <div class="tab-panel ${activeTab === 'anomalies' ? 'active' : ''}" style="max-height:280px; overflow-y:auto; display:flex; flex-direction:column; gap:10px;">
             ${DB.antifrodLog.map(log => {
               const isPending = log.status === 'pending_review' || log.status === 'blocked';
@@ -1130,20 +1086,21 @@ function AdminPage(): HTMLElement {
       </div>
     `;
 
-    // Hook events
     container.querySelector('#btn-admin-logout')?.addEventListener('click', () => {
       Session.logout();
       renderView();
     });
 
-    container.querySelectorAll('.tab-btn').forEach(btn => {
+    container.querySelectorAll('.tab-btn').forEach(btnEl => {
+      const btn = btnEl as HTMLButtonElement;
       btn.onclick = () => {
         activeTab = btn.getAttribute('data-tab')!;
         renderDashboard();
       };
     });
 
-    container.querySelectorAll('.btn-action-approve-quota').forEach(btn => {
+    container.querySelectorAll('.btn-action-approve-quota').forEach(btnEl => {
+      const btn = btnEl as HTMLButtonElement;
       btn.onclick = async () => {
         const id = btn.getAttribute('data-id');
         const log = DB.antifrodLog.find(x => x.id === id);
@@ -1152,7 +1109,6 @@ function AdminPage(): HTMLElement {
             await leaseQuota(log.vessel, 'roach', log.weight);
             log.status = 'approved_manually';
             
-            // Put updated log on server
             await fetch(`${API_BASE}/antifrod`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -1200,7 +1156,7 @@ function AdminPage(): HTMLElement {
             iconAnchor: [7, 7]
           });
           L.marker([m.lat, m.lng], { icon: redIcon }).addTo(mapInstance)
-            .bindPopup(`<strong>🚨 Разлив нефти</strong><br>Немедленный сигнал тревоги`);
+            .bindPopup(`<strong>🚨 Разлив нефти</strong>`);
         } else if (m.type === 'seal') {
           const sealIcon = L.divIcon({
             html: '<div style="width:14px; height:14px; background-color:#06B6D4; border:2px solid white; border-radius:50%; box-shadow:0 0 8px #06B6D4;"></div>',
@@ -1208,10 +1164,10 @@ function AdminPage(): HTMLElement {
             iconAnchor: [7, 7]
           });
           L.marker([m.lat, m.lng], { icon: sealIcon }).addTo(mapInstance)
-            .bindPopup(`<strong>🐬 Каспийский тюлень #37</strong><br>Eco-Rescue маркер подтвержден`);
+            .bindPopup(`<strong>🐬 Каспийский тюлень #37</strong>`);
         } else {
           L.marker([m.lat, m.lng]).addTo(mapInstance)
-            .bindPopup(`<strong>Улов: ${m.label}</strong><br>${m.weight} кг`);
+            .bindPopup(`<strong>Улов: ${m.label}</strong>`);
         }
       });
     }, 150);
@@ -1221,9 +1177,6 @@ function AdminPage(): HTMLElement {
   return container;
 }
 
-// ═══════════════════════════════════════════════
-// PAGE 5: SECURITY CONTROL (Cyber Dark Mode)
-// ═══════════════════════════════════════════════
 function IdxControlPage(): HTMLElement {
   const container = document.createElement('div');
   container.className = 'page-content container fade-in';
@@ -1258,8 +1211,7 @@ function IdxControlPage(): HTMLElement {
           <div class="card cyber-card" style="padding:24px;">
             <div style="font-weight:700; margin-bottom:12px; font-family:'Courier New', monospace;">AI Cross-Check Anomaly Detector</div>
             <div class="terminal" style="background:#030712; max-height:260px; overflow-y:auto; padding:12px; border-radius:8px;">
-              <div class="terminal-line"><span class="ts">[13:48:02]</span> <span class="info">[INFO]</span> OcuChain Ledger инициализирован. Интегрировано блоков: ${DB.catches.length}</div>
-              <div class="terminal-line"><span class="ts">[13:48:03]</span> <span class="ok">[OK]</span> Модуль пространственного гироскопа калиброван.</div>
+              <div class="terminal-line"><span class="ts">[13:48:02]</span> <span class="info">[INFO]</span> OcuChain Ledger. Блоков: ${DB.catches.length}</div>
               ${DB.antifrodLog.map(x => `
                 <div class="terminal-line">
                   <span class="ts">[${new Date(x.timestamp).toLocaleTimeString()}]</span>
@@ -1272,7 +1224,7 @@ function IdxControlPage(): HTMLElement {
 
           <div class="card cyber-card" style="padding:24px; display:flex; flex-direction:column; gap:20px;">
             <div>
-              <div style="font-weight:700; font-family:'Courier New', monospace; margin-bottom:12px;">LocalStorage Integrity (OcuChain Ledger)</div>
+              <div style="font-weight:700; font-family:'Courier New', monospace; margin-bottom:12px;">LocalStorage Integrity</div>
               ${chainStatus.valid 
                 ? `<div class="alert alert-green" style="background:rgba(16,185,129,0.05); border:1px solid var(--green); color:#D1FAE5; padding:12px; border-radius:12px;">
                     ✓ Блокчейн цел. Все хэши OcuChain Ledger валидны.
@@ -1303,9 +1255,6 @@ function IdxControlPage(): HTMLElement {
   return container;
 }
 
-// ═══════════════════════════════════════════════
-// SPA APPLICATION CONSTRUCTOR
-// ═══════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', async () => {
   const appRoot = document.getElementById('app-root');
   if (!appRoot) return;
@@ -1355,7 +1304,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         <div class="footer-inner">
           <div class="footer-brand">
             <div class="logo-white">OcuCast</div>
-            <p>Физико-цифровая инфраструктура доверенной фиксации вылова.</p>
+            <p>Физико-цифровая инфраструктура доверенной фиксации вылова рыбы.</p>
           </div>
           <div class="footer-cert">
             <div class="cert-badge">🛡️ Департамент Минсельхоза РК</div>
@@ -1374,14 +1323,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   appRoot.appendChild(pageContainer);
   appRoot.appendChild(footer);
 
-  // Router register
   Router.register('/passport', PassportPage);
   Router.register('/fisherman', FishermanPage);
   Router.register('/checkpoint', CheckpointPage);
   Router.register('/admin', AdminPage);
   Router.register('/idx-control', IdxControlPage);
 
-  // Intercept navigate to update footer
   const originalNavigate = Router.navigate;
   Router.navigate = function(path: string, pushState?: boolean) {
     originalNavigate.call(Router, path, pushState);
@@ -1394,13 +1341,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateFooterHash();
   };
 
-  // Sync DB
   await DB.init();
-
-  // Start router
   Router.init();
 
-  // Hide loader
   const loader = document.getElementById('loading-screen');
   if (loader) {
     loader.classList.add('hidden');
