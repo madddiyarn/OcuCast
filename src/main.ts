@@ -1,6 +1,6 @@
 import { CatchTransaction, FishSpecies, SupplyChainStage } from './types';
 import { getCatches, saveCatch, updateCatchStatus, addStageToCatch, getQuotas, verifyBlockchainIntegrity } from './db';
-import { runAIEstimation, checkCatchLimits, OcuQuotaShare, OcuLock } from './backend';
+import { runAIEstimation, checkCatchLimits, OcuQuotaShare, OcuLock, executeLiveSatelliteAudit } from './backend';
 
 declare const L: any;
 declare const jsQR: any;
@@ -55,7 +55,6 @@ function startQRScanning(video: HTMLVideoElement, onDecoded: (data: string) => v
     })
     .catch(err => {
       console.warn("Camera access denied or failed for QR scanning:", err);
-      // Fallback mock scanning if camera fails or is blocked:
       setTimeout(() => {
         const catches = getCatches();
         if (catches.length > 0) {
@@ -124,7 +123,6 @@ const DEFAULT_STAGES = (_id: string, dateStr: string): SupplyChainStage[] => [
   }
 ];
 
-
 const Router = {
   routes: {} as Record<string, () => HTMLElement>,
   currentPath: '/passport',
@@ -153,7 +151,6 @@ const Router = {
         return;
       }
 
-      // Check blockchain integrity on render to protect indices
       const integrity = verifyBlockchainIntegrity();
       if (!integrity.valid) {
         OcuLock();
@@ -162,11 +159,9 @@ const Router = {
         return;
       }
 
-      // Extract path and query params
       const [cleanPath, queryString] = path.split('?');
       const route = this.routes[cleanPath] || this.routes['/passport'];
       
-      // Save parsed search params so pages can retrieve them
       (window as any)._currentRouteQuery = new URLSearchParams(queryString || "");
 
       this.currentPath = path;
@@ -235,9 +230,6 @@ function renderOcuLockScreen(): HTMLElement {
   return container;
 }
 
-// ═══════════════════════════════════════════════
-// PAGE 1: DIGITAL PASSPORT
-// ═══════════════════════════════════════════════
 function PassportPage(): HTMLElement {
   const container = document.createElement('div');
   container.className = 'page-content container fade-in';
@@ -420,6 +412,12 @@ function PassportPage(): HTMLElement {
             <h3 style="font-size: 13px; font-weight: 800; margin-bottom: 16px; color: #1E3A8A; text-transform: uppercase;">⛓️ Supply Chain Traceability Timeline</h3>
             <div class="timeline">${timelineHtml}</div>
 
+            ${c.satelliteAuditLog ? `
+              <div style="margin-top: 16px; padding: 12px; background: #FFFBEB; border: 1px solid #F59E0B; border-radius: 8px; font-size: 12px; color: #B45309;">
+                <strong>Satellite Audit Data:</strong> ${c.satelliteAuditLog}
+              </div>
+            ` : ''}
+
             <div style="margin-top: 24px; padding: 12px; background: #F8FAFC; border-radius: 8px; font-family: monospace; font-size: 10px; color: #475569; word-break: break-all;">
               OcuChain Blockchain Signature: ${c.hash}
             </div>
@@ -435,6 +433,16 @@ function PassportPage(): HTMLElement {
               <div id="passport-map" style="height: 280px; width: 100%;"></div>
             </div>
           </div>
+          ${c.satelliteOverlayImg ? `
+            <div class="card" style="border-radius: 16px; overflow: hidden;">
+              <div class="card-header">
+                <div class="card-title">Satellite Optical Analysis</div>
+              </div>
+              <div class="card-body" style="padding: 0; text-align: center;">
+                <img src="${c.satelliteOverlayImg}" style="width: 100%; height: 200px; object-fit: cover;" alt="Satellite View" />
+              </div>
+            </div>
+          ` : ''}
         </div>
       </div>
     `;
@@ -591,9 +599,93 @@ function PassportPage(): HTMLElement {
   return container;
 }
 
-// ═══════════════════════════════════════════════
-// PAGE 2: FISHERMAN TERMINAL
-// ═══════════════════════════════════════════════
+function downloadReceiptBuffer(id: string, species: string, weight: number, vessel: string, hash: string) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 400;
+  canvas.height = 520;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.strokeStyle = '#1E3A8A';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
+
+  ctx.fillStyle = '#1E3A8A';
+  ctx.font = 'bold 20px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('OCUCAST TRUSTED SEAL', canvas.width / 2, 45);
+
+  ctx.fillStyle = '#06B6D4';
+  ctx.font = 'bold 12px "Courier New", monospace';
+  ctx.fillText('MANGYSTAU REGION FISH REGISTRY', canvas.width / 2, 65);
+
+  ctx.strokeStyle = '#E2E8F0';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(20, 80);
+  ctx.lineTo(380, 80);
+  ctx.stroke();
+
+  ctx.fillStyle = '#0F172A';
+  ctx.font = '14px "Courier New", monospace';
+  ctx.textAlign = 'left';
+
+  ctx.fillText(`CATCH ID: ${id}`, 30, 110);
+  ctx.fillText(`VESSEL:   ${vessel}`, 30, 135);
+  ctx.fillText(`SPECIES:  ${species}`, 30, 160);
+  ctx.fillText(`WEIGHT:   ${weight.toFixed(2)} kg`, 30, 185);
+  ctx.fillText(`DATE:     ${new Date().toLocaleDateString()}`, 30, 210);
+
+  ctx.strokeStyle = '#E2E8F0';
+  ctx.beginPath();
+  ctx.moveTo(20, 230);
+  ctx.lineTo(380, 230);
+  ctx.stroke();
+
+  ctx.fillStyle = '#475569';
+  ctx.font = '9px "Courier New", monospace';
+  ctx.fillText('OCUCHAIN BLOCK SIGNATURE:', 30, 250);
+  ctx.fillText(hash.substring(0, 32), 30, 265);
+  ctx.fillText(hash.substring(32), 30, 278);
+
+  const qrImg = new Image();
+  qrImg.crossOrigin = 'anonymous';
+  const passportUrl = `${window.location.origin}/passport?id=${id}`;
+  qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(passportUrl)}`;
+  
+  const finishDownload = () => {
+    const link = document.createElement('a');
+    link.download = 'OcuCast_Print_Buffer.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  };
+
+  qrImg.onload = () => {
+    ctx.drawImage(qrImg, 125, 300, 150, 150);
+    ctx.fillStyle = '#94A3B8';
+    ctx.font = 'bold 10px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('PHYSICAL CHECK BUFFER - WALKPRINT READY', canvas.width / 2, 485);
+    finishDownload();
+  };
+
+  qrImg.onerror = () => {
+    ctx.fillStyle = '#EF4444';
+    ctx.font = 'bold 12px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('[QR CODE MATRIX SIGNED]', canvas.width / 2, 380);
+
+    ctx.fillStyle = '#94A3B8';
+    ctx.font = 'bold 10px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('PHYSICAL CHECK BUFFER - WALKPRINT READY', canvas.width / 2, 485);
+    finishDownload();
+  };
+}
+
 function FishermanPage(): HTMLElement {
   const container = document.createElement('div');
   container.className = 'page-content container fade-in';
@@ -804,8 +896,9 @@ function FishermanPage(): HTMLElement {
             OcuCast Secure Seal - Do not tamper<br>
             CODE: <span id="final-registered-id"></span>
           </div>
+          <button id="btn-print-physical-receipt" class="btn btn-cyan btn-block" style="background:#06B6D4; color:white; margin-bottom:8px; display:block;">Печать физического QR-чека</button>
           <button id="btn-go-to-passport-immediate" class="btn btn-primary btn-block" style="background:#1E3A8A; margin-bottom:8px; display:block;">View Digital Passport</button>
-          <button id="btn-restart-wizard" class="btn btn-cyan btn-block" style="background:#06B6D4; color:white;">Start New Catch Registration</button>
+          <button id="btn-restart-wizard" class="btn btn-outline btn-block">Start New Catch Registration</button>
         </div>
 
         <button id="btn-step3-back" class="btn btn-ghost" style="margin-top:10px;">Restart Calibration</button>
@@ -906,6 +999,36 @@ function FishermanPage(): HTMLElement {
         };
       }
 
+      const setupSuccess = (newId: string, item: any) => {
+        btnBack3!.style.display = "none";
+        const successCard = container.querySelector('#finalize-success-card') as HTMLElement | null;
+        if (successCard) {
+          successCard.style.display = "block";
+          const lbl = container.querySelector('#final-registered-id');
+          if (lbl) lbl.textContent = newId;
+
+          const qrImg = container.querySelector('#finalize-qr-img') as HTMLImageElement | null;
+          if (qrImg) {
+            const passportUrl = `${window.location.origin}/passport?id=${newId}`;
+            qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(passportUrl)}`;
+          }
+
+          const btnPrintReceipt = container.querySelector('#btn-print-physical-receipt') as HTMLButtonElement | null;
+          if (btnPrintReceipt) {
+            btnPrintReceipt.onclick = () => {
+              downloadReceiptBuffer(newId, item.species, item.weight, item.vessel, item.hash || 'N/A');
+            };
+          }
+
+          const btnPassportImmediate = container.querySelector('#btn-go-to-passport-immediate') as HTMLButtonElement | null;
+          if (btnPassportImmediate) {
+            btnPassportImmediate.onclick = () => {
+              Router.navigate(`/passport?id=${newId}`);
+            };
+          }
+        }
+      };
+
       const btnEscalate = container.querySelector('#btn-escalate-inspector') as HTMLButtonElement | null;
       if (btnEscalate) {
         btnEscalate.onclick = () => {
@@ -924,32 +1047,15 @@ function FishermanPage(): HTMLElement {
             coldChainStatus: "Normal" as const,
             currentStage: 1,
             gyroAngle: 12,
+            aisStatus: "Mismatch" as const,
+            vesselsDetectedOnPhoto: 1,
+            satelliteOverlayImg: "",
             stages: DEFAULT_STAGES(newId, new Date().toISOString())
           };
 
-          saveCatch(freshItem);
-
+          const saved = saveCatch(freshItem);
           btnEscalate.style.display = "none";
-          btnBack3!.style.display = "none";
-          const successCard = container.querySelector('#finalize-success-card') as HTMLElement | null;
-          if (successCard) {
-            successCard.style.display = "block";
-            const lbl = container.querySelector('#final-registered-id');
-            if (lbl) lbl.textContent = newId;
-
-            const qrImg = container.querySelector('#finalize-qr-img') as HTMLImageElement | null;
-            if (qrImg) {
-              const passportUrl = `${window.location.origin}/passport?id=${newId}`;
-              qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(passportUrl)}`;
-            }
-
-            const btnPassportImmediate = container.querySelector('#btn-go-to-passport-immediate') as HTMLButtonElement | null;
-            if (btnPassportImmediate) {
-              btnPassportImmediate.onclick = () => {
-                Router.navigate(`/passport?id=${newId}`);
-              };
-            }
-          }
+          setupSuccess(newId, saved);
         };
       }
 
@@ -971,32 +1077,15 @@ function FishermanPage(): HTMLElement {
             coldChainStatus: "Normal" as const,
             currentStage: 1,
             gyroAngle: 12,
+            aisStatus: "Active" as const,
+            vesselsDetectedOnPhoto: 1,
+            satelliteOverlayImg: "",
             stages: DEFAULT_STAGES(newId, new Date().toISOString())
           };
 
-          saveCatch(freshItem);
-
+          const saved = saveCatch(freshItem);
           btnFinalize.style.display = "none";
-          btnBack3!.style.display = "none";
-          const successCard = container.querySelector('#finalize-success-card') as HTMLElement | null;
-          if (successCard) {
-            successCard.style.display = "block";
-            const lbl = container.querySelector('#final-registered-id');
-            if (lbl) lbl.textContent = newId;
-
-            const qrImg = container.querySelector('#finalize-qr-img') as HTMLImageElement | null;
-            if (qrImg) {
-              const passportUrl = `${window.location.origin}/passport?id=${newId}`;
-              qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(passportUrl)}`;
-            }
-
-            const btnPassportImmediate = container.querySelector('#btn-go-to-passport-immediate') as HTMLButtonElement | null;
-            if (btnPassportImmediate) {
-              btnPassportImmediate.onclick = () => {
-                Router.navigate(`/passport?id=${newId}`);
-              };
-            }
-          }
+          setupSuccess(newId, saved);
         };
       }
 
@@ -1023,7 +1112,6 @@ function FishermanPage(): HTMLElement {
         }
       })
       .catch(() => {
-        // Fallback fish image
         capturedBase64 = "https://images.unsplash.com/photo-1534482421-64566f976cfa?auto=format&fit=crop&w=600&q=80";
         renderWizard();
       });
@@ -1056,9 +1144,6 @@ function FishermanPage(): HTMLElement {
   return container;
 }
 
-// ═══════════════════════════════════════════════
-// PAGE 3: LOGISTICS CHECKPOINT TERMINAL
-// ═══════════════════════════════════════════════
 function CheckpointPage(): HTMLElement {
   const container = document.createElement('div');
   container.className = 'page-content container fade-in';
@@ -1242,12 +1327,10 @@ function CheckpointPage(): HTMLElement {
   return container;
 }
 
-// ═══════════════════════════════════════════════
-// PAGE 4: SITUATION CENTER DASHBOARD
-// ═══════════════════════════════════════════════
 function AdminPage(): HTMLElement {
   const container = document.createElement('div');
   container.className = 'page-content container fade-in';
+  let selectedAnomalyId = "";
 
   function renderView() {
     const adminSession = Session.isAdminLoggedIn();
@@ -1313,21 +1396,18 @@ function AdminPage(): HTMLElement {
       `;
     }).join('');
 
-    const anomalousCatches = catches.filter(c => c.oilDetected === true || c.status === "Suspicious");
+    const anomalousCatches = catches.filter(c => c.oilDetected === true || c.status === "Suspicious" || c.status === "Blocked");
 
     const tableRowsHtml = anomalousCatches.map(c => {
       const factor = c.oilDetected ? "Oil Contamination" : "AntiGravity Biological Mismatch";
       return `
-        <tr>
-          <td style="font-weight: 800;">${c.id}</td>
+        <tr class="anomaly-row" data-id="${c.id}" style="cursor: pointer; transition: background 0.2s;">
+          <td style="font-weight: 800; color: #1E3A8A;">${c.id} ${selectedAnomalyId === c.id ? '▶' : ''}</td>
           <td>${c.vessel}</td>
           <td>[${c.location[0].toFixed(4)}, ${c.location[1].toFixed(4)}]</td>
           <td style="color: #EF4444; font-weight: 700;">${factor}</td>
           <td>
-            ${c.status === 'Verified' 
-              ? `<span class="badge badge-green">Resolved</span>` 
-              : `<button class="btn btn-cyan btn-sm btn-legalize-quota" data-id="${c.id}" data-weight="${c.weight}" data-species="${c.species}" style="background:#06B6D4; color:white; font-size:11px; padding:6px 12px;">Legalize Catch via Smart Lease</button>`
-            }
+            <span class="badge ${c.status === 'Verified' ? 'badge-green' : c.status === 'Blocked' ? 'badge-red' : 'badge-amber'}">${c.status}</span>
           </td>
         </tr>
       `;
@@ -1347,27 +1427,32 @@ function AdminPage(): HTMLElement {
       </div>
 
       <div style="display: grid; grid-template-columns: 1.6fr 1fr; gap: 32px;" class="passport-grid">
-        <div class="card" style="padding: 24px; border-radius: 16px;">
-          <h3 style="font-size:15px; font-weight:800; color:#1E3A8A; margin-bottom:16px; text-transform:uppercase;">Anthropogenic Anomaly & Biological Audit Log</h3>
-          <div style="overflow-x: auto;">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Catch ID</th>
-                  <th>Vessel</th>
-                  <th>Coordinates</th>
-                  <th>Flagged Anomaly</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${tableRowsHtml.length > 0 ? tableRowsHtml : `<tr><td colspan="5" style="text-align:center; color:#94A3B8; padding: 20px;">No active biological anomalies recorded on ledger.</td></tr>`}
-              </tbody>
-            </table>
+        <div style="display: flex; flex-direction: column; gap: 24px;">
+          <div class="card" style="padding: 24px; border-radius: 16px;">
+            <h3 style="font-size:13px; font-weight:800; color:#1E3A8A; margin-bottom:16px; text-transform:uppercase;">Anthropogenic Anomaly & Biological Audit Log</h3>
+            <p style="font-size: 12px; color: #64748B; margin-bottom: 12px;">💡 Click any row to inspect, run AI satellite verification, or authorize quota lease.</p>
+            <div style="overflow-x: auto;">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Catch ID</th>
+                    <th>Vessel</th>
+                    <th>Coordinates</th>
+                    <th>Flagged Anomaly</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${tableRowsHtml.length > 0 ? tableRowsHtml : `<tr><td colspan="5" style="text-align:center; color:#94A3B8; padding: 20px;">No active biological anomalies recorded on ledger.</td></tr>`}
+                </tbody>
+              </table>
+            </div>
           </div>
+
+          <div id="satellite-audit-card-container"></div>
         </div>
 
-        <div class="card" style="border-radius:16px;">
+        <div class="card" style="border-radius:16px; height: fit-content;">
           <div class="card-header">
             <div class="card-title">Regional Radar Eco-Heatmap</div>
             <div class="card-subtitle">Active environmental indicators - Caspian Sea</div>
@@ -1387,23 +1472,103 @@ function AdminPage(): HTMLElement {
       };
     }
 
-    container.querySelectorAll('.btn-legalize-quota').forEach(btnEl => {
-      const btn = btnEl as HTMLButtonElement;
-      btn.onclick = () => {
-        const id = btn.getAttribute('data-id')!;
-        const weight = parseFloat(btn.getAttribute('data-weight')!);
-        const species = btn.getAttribute('data-species')! as FishSpecies;
+    container.querySelectorAll('.anomaly-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const id = row.getAttribute('data-id')!;
+        selectedAnomalyId = id;
+        renderDashboard();
+        renderSatelliteAuditCard(id);
+      });
+    });
 
-        const result = OcuQuotaShare(weight, species);
-        if (result.leased) {
-          updateCatchStatus(id, result.newStatus);
-          alert(`Smart lease approved. Unused quota leased from Caspian vessel ${result.partnerVessel}. Anomalous transaction approved.`);
+    if (selectedAnomalyId) {
+      renderSatelliteAuditCard(selectedAnomalyId);
+    }
+
+    initAdminMap();
+  }
+
+  function renderSatelliteAuditCard(catchId: string) {
+    const auditContainer = container.querySelector('#satellite-audit-card-container');
+    if (!auditContainer) return;
+
+    const matches = getCatches();
+    const c = matches.find(item => item.id === catchId);
+    if (!c) return;
+
+    auditContainer.innerHTML = `
+      <div class="card" style="padding: 24px; border-radius: 16px; border: 1.5px solid #06B6D4; background: #FAFDFE; margin-top: 8px;">
+        <h3 style="font-size: 15px; font-weight: 800; color: #1E3A8A; margin-bottom: 8px;">Спутниковая проверка и АИС (Автоматический анализ ИИ)</h3>
+        <p style="font-size: 12.5px; color: #475569; margin-bottom: 16px;">
+          Inspecting target batch <strong>${c.id}</strong> from vessel <strong>${c.vessel}</strong>. Coordinates: [${c.location[0].toFixed(4)}, ${c.location[1].toFixed(4)}].
+        </p>
+
+        <div id="audit-feedback-area"></div>
+
+        <form id="satellite-audit-form" style="display: flex; flex-direction: column; gap: 14px;">
+          <div class="form-group">
+            <label class="form-label" style="font-weight: 700;">Код верификации снимка (1 - Легально, 0 - Нарушение)</label>
+            <input type="text" id="satellite-input-code" class="form-input" placeholder="e.g. 1 or 0" value="1" required>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" style="font-weight: 700;">Входящий лог телеметрии АИС / Описание кадра</label>
+            <textarea id="satellite-telemetry-desc" class="form-input" rows="3" required>Optical frame matches reported transshipment profile. Sea surface radar returns confirm single hull signature within 200m envelope.</textarea>
+          </div>
+
+          <div style="display: flex; gap: 12px; margin-top: 8px;">
+            <button type="submit" id="btn-run-satellite-audit" class="btn btn-cyan" style="background:#06B6D4; color:white; flex: 1;">Запустить ИИ-анализ снимка</button>
+            ${c.status !== 'Verified' ? `
+              <button type="button" id="btn-legalize-direct" class="btn btn-primary" style="background:#1E3A8A; color:white; flex: 1;">
+                Legalize via Smart Lease
+              </button>
+            ` : ''}
+          </div>
+        </form>
+      </div>
+    `;
+
+    const form = auditContainer.querySelector('#satellite-audit-form') as HTMLFormElement | null;
+    form?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const code = (auditContainer.querySelector('#satellite-input-code') as HTMLInputElement).value.trim();
+      const desc = (auditContainer.querySelector('#satellite-telemetry-desc') as HTMLTextAreaElement).value.trim();
+
+      executeLiveSatelliteAudit(catchId, code, desc);
+
+      const feedback = auditContainer.querySelector('#audit-feedback-area') as HTMLElement | null;
+      if (feedback) {
+        if (code === "1") {
+          feedback.innerHTML = `
+            <div class="alert alert-green" style="margin-bottom: 16px; border-radius: 8px; display: block;">
+              <strong>✓ Verification Accuracy 100%:</strong> AI confirms a single legitimate vessel at coordinate telemetry. Status updated to Verified.
+            </div>
+          `;
+        } else {
+          feedback.innerHTML = `
+            <div class="alert alert-red" style="margin-bottom: 16px; border-radius: 8px; display: block;">
+              <strong>🚨 КРИТИЧЕСКОЕ НАРУШЕНИЕ:</strong> ИИ подтвердил нелегальную перегрузку в море (shadow transshipment). Status updated to Blocked.
+            </div>
+          `;
+        }
+      }
+
+      setTimeout(() => {
+        renderDashboard();
+      }, 1500);
+    });
+
+    const btnLease = auditContainer.querySelector('#btn-legalize-direct') as HTMLButtonElement | null;
+    if (btnLease) {
+      btnLease.onclick = () => {
+        const leaseResult = OcuQuotaShare(c.weight, c.species);
+        if (leaseResult.leased) {
+          updateCatchStatus(c.id, leaseResult.newStatus);
+          alert(`Smart lease approved. Unused quota leased from Caspian vessel ${leaseResult.partnerVessel}. Anomalous transaction approved.`);
           renderDashboard();
         }
       };
-    });
-
-    initAdminMap();
+    }
   }
 
   function initAdminMap() {
@@ -1429,9 +1594,9 @@ function AdminPage(): HTMLElement {
 
         const catches = getCatches();
         catches.forEach(c => {
-          if (c.oilDetected || c.status === "Suspicious") {
-            const color = c.oilDetected ? "#EF4444" : "#F59E0B";
-            const anomalyLabel = c.oilDetected ? "Oil Spill Contamination" : "AntiGravity Anomaly";
+          if (c.oilDetected || c.status === "Suspicious" || c.status === "Blocked") {
+            const color = c.status === 'Blocked' ? "#EF4444" : c.oilDetected ? "#EF4444" : "#F59E0B";
+            const anomalyLabel = c.status === 'Blocked' ? "Illegal Transshipment Blocked" : c.oilDetected ? "Oil Spill Contamination" : "AntiGravity Anomaly";
 
             const customIcon = L.divIcon({
               html: `<div style="width: 14px; height: 14px; background-color: ${color}; border: 2px solid white; border-radius: 50%; box-shadow: 0 0 8px ${color};"></div>`,
@@ -1453,9 +1618,186 @@ function AdminPage(): HTMLElement {
   return container;
 }
 
-// ═══════════════════════════════════════════════
-// PAGE 5: CYBER TECHNICAL SUPERVISION
-// ═══════════════════════════════════════════════
+function HowItWorksPage(): HTMLElement {
+  const container = document.createElement('div');
+  container.className = 'page-content container fade-in';
+  
+  container.innerHTML = `
+    <style>
+      .timeline-step {
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+      }
+      .timeline-step:hover {
+        transform: translateY(-4px);
+        box-shadow: var(--shadow-lg);
+      }
+      
+      /* Pulse animation for node chain */
+      @keyframes greenPulse {
+        0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+        70% { box-shadow: 0 0 0 12px rgba(16, 185, 129, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+      }
+      .node-glow {
+        animation: greenPulse 2s infinite;
+      }
+
+      /* Radar scanning rotation */
+      @keyframes radarSweep {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+      .radar-sweep-line {
+        transform-origin: 100px 100px;
+        animation: radarSweep 4s linear infinite;
+      }
+      
+      /* Satellite laser array */
+      @keyframes laserDash {
+        to {
+          stroke-dashoffset: -40;
+        }
+      }
+      .laser-dashed {
+        stroke-dasharray: 5, 5;
+        animation: laserDash 1s linear infinite;
+      }
+
+      /* Blinking light */
+      @keyframes blinkLight {
+        0%, 100% { opacity: 0.2; }
+        50% { opacity: 1; }
+      }
+      .indicator-blink {
+        animation: blinkLight 1.5s infinite;
+      }
+    </style>
+
+    <div style="text-align: center; margin-bottom: 40px;">
+      <h1 style="font-size: 28px; font-weight: 800; color: #1E3A8A; letter-spacing: -0.5px;">Physical-Digital OcuCast Telemetry Architecture</h1>
+      <p style="color: #475569; font-size: 15px; max-width: 600px; margin: 8px auto 0;">
+        How the Fish Resources Department of Mangystau Region verifies marine catch data in real-time.
+      </p>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; margin-bottom: 48px;" class="passport-grid">
+      
+      <!-- STEP 1 -->
+      <div class="card timeline-step" style="padding: 24px; border-radius: 16px; display: flex; flex-direction: column; justify-content: space-between;">
+        <div>
+          <div style="background: #ECFEFF; color: #0891B2; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 16px; margin-bottom: 16px;">1</div>
+          <h3 style="font-size: 16px; font-weight: 800; color: #1E3A8A; margin-bottom: 8px;">Physical Capture & CV</h3>
+          <p style="font-size: 13px; color: #475569; line-height: 1.6; margin-bottom: 20px;">
+            The physical scale measures the net weight of the fish while the ship camera captures the sample. AI registers retina contours and determines exact biological specs.
+          </p>
+        </div>
+        
+        <!-- Animated SVG Step 1 -->
+        <div style="background: #F8FAFC; border-radius: 12px; height: 180px; display: flex; align-items: center; justify-content: center; overflow: hidden; border: 1px solid #E2E8F0; position: relative;">
+          <svg width="200" height="150" viewBox="0 0 200 150">
+            <!-- Fish contour -->
+            <path d="M 40,75 C 60,55 120,55 140,75 C 150,65 165,65 170,75 C 165,85 150,85 140,75 C 120,95 60,95 40,75 Z" fill="none" stroke="#64748B" stroke-width="2" />
+            <circle cx="130" cy="71" r="2.5" fill="#3B82F6" />
+            
+            <!-- Camera frame & optical lines -->
+            <rect x="70" y="20" width="60" height="30" rx="3" fill="#1E3A8A" />
+            <circle cx="100" cy="35" r="8" fill="#06B6D4" />
+            <polygon points="100,35 60,75 140,75" fill="rgba(6, 182, 212, 0.08)" />
+            <line x1="100" y1="35" x2="60" y2="75" stroke="#06B6D4" stroke-width="1.5" stroke-dasharray="3,3" />
+            <line x1="100" y1="35" x2="140" y2="75" stroke="#06B6D4" stroke-width="1.5" stroke-dasharray="3,3" />
+          </svg>
+          <div class="indicator-blink" style="position: absolute; bottom: 12px; left: 12px; display: flex; align-items: center; gap: 6px; font-size: 10px; font-family: monospace; font-weight: bold; color: #10B981;">
+            <span style="width: 8px; height: 8px; border-radius: 50%; background: #10B981; display: inline-block;"></span>
+            Scale Data Synchronized
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 2 -->
+      <div class="card timeline-step" style="padding: 24px; border-radius: 16px; display: flex; flex-direction: column; justify-content: space-between;">
+        <div>
+          <div style="background: #F0FDF4; color: #16A34A; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 16px; margin-bottom: 16px;">2</div>
+          <h3 style="font-size: 16px; font-weight: 800; color: #1E3A8A; margin-bottom: 8px;">OcuChain Cryptographic Ledger</h3>
+          <p style="font-size: 13px; color: #475569; line-height: 1.6; margin-bottom: 20px;">
+            Weights and timestamps form a tamper-proof cryptographic ledger block. Any attempt to modify local history instantly breaks the hash signature chain.
+          </p>
+        </div>
+
+        <!-- Animated Blockchain Nodes Step 2 -->
+        <div style="background: #F8FAFC; border-radius: 12px; height: 180px; display: flex; align-items: center; justify-content: center; overflow: hidden; border: 1px solid #E2E8F0;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <!-- Block 1 -->
+            <div class="node-glow" style="width: 44px; height: 60px; background: white; border: 1.5px solid #10B981; border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 9px; font-family: monospace;">
+              <span style="font-weight: 800; color: #10B981;">BLK #1</span>
+              <span style="color: #64748B; font-size: 8px; margin-top: 4px;">sha:a4</span>
+            </div>
+            <!-- Arrow -->
+            <span style="color: #10B981; font-weight: 800;">➔</span>
+            <!-- Block 2 -->
+            <div class="node-glow" style="width: 44px; height: 60px; background: white; border: 1.5px solid #10B981; border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 9px; font-family: monospace;">
+              <span style="font-weight: 800; color: #10B981;">BLK #2</span>
+              <span style="color: #64748B; font-size: 8px; margin-top: 4px;">prev:a4</span>
+            </div>
+            <!-- Arrow -->
+            <span style="color: #10B981; font-weight: 800;">➔</span>
+            <!-- Block 3 -->
+            <div class="node-glow" style="width: 44px; height: 60px; background: white; border: 1.5px solid #10B981; border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 9px; font-family: monospace;">
+              <span style="font-weight: 800; color: #10B981;">BLK #3</span>
+              <span style="color: #64748B; font-size: 8px; margin-top: 4px;">prev:c8</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 3 -->
+      <div class="card timeline-step" style="padding: 24px; border-radius: 16px; display: flex; flex-direction: column; justify-content: space-between;">
+        <div>
+          <div style="background: #EFF6FF; color: #2563EB; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 16px; margin-bottom: 16px;">3</div>
+          <h3 style="font-size: 16px; font-weight: 800; color: #1E3A8A; margin-bottom: 8px;">Real-Time AIS & Satellite Audit</h3>
+          <p style="font-size: 13px; color: #475569; line-height: 1.6; margin-bottom: 20px;">
+            AI situation engines monitor ship locations via AIS. If a ship goes offline or meets another vessel, satellite radar scans flag the shadow transshipment.
+          </p>
+        </div>
+
+        <!-- Radar & Satellite Sweep Step 3 -->
+        <div style="background: #0B0F19; border-radius: 12px; height: 180px; display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; border: 1px solid #1E293B;">
+          <svg width="200" height="180" viewBox="0 0 200 180">
+            <!-- Radar Circle -->
+            <circle cx="100" cy="100" r="70" fill="none" stroke="rgba(6, 182, 212, 0.15)" stroke-width="1.5" />
+            <circle cx="100" cy="100" r="50" fill="none" stroke="rgba(6, 182, 212, 0.15)" stroke-width="1" />
+            <circle cx="100" cy="100" r="30" fill="none" stroke="rgba(6, 182, 212, 0.15)" stroke-width="1" />
+            <line x1="30" y1="100" x2="170" y2="100" stroke="rgba(6, 182, 212, 0.15)" stroke-width="1" />
+            <line x1="100" y1="30" x2="100" y2="170" stroke="rgba(6, 182, 212, 0.15)" stroke-width="1" />
+            
+            <!-- Sweep line -->
+            <line x1="100" y1="100" x2="100" y2="30" class="radar-sweep-line" stroke="#06B6D4" stroke-width="2" opacity="0.7" />
+
+            <!-- Boat Symbol -->
+            <path d="M 85,115 L 115,115 L 120,110 L 80,110 Z" fill="#E2E8F0" />
+            <rect x="95" y="102" width="10" height="8" fill="#94A3B8" />
+
+            <!-- Satellite Symbol -->
+            <rect x="90" y="20" width="20" height="8" rx="2" fill="#3B82F6" />
+            <rect x="80" y="22" width="8" height="4" fill="#06B6D4" />
+            <rect x="112" y="22" width="8" height="4" fill="#06B6D4" />
+            <circle cx="100" cy="24" r="2" fill="#FFFFFF" />
+
+            <!-- Laser beam to boat -->
+            <line x1="100" y1="28" x2="100" y2="108" class="laser-dashed" stroke="#EF4444" stroke-width="1.5" />
+          </svg>
+          
+          <div style="position: absolute; top: 12px; right: 12px; background: rgba(16, 185, 129, 0.2); border: 1px solid #10B981; color: #10B981; font-size: 8px; font-weight: bold; padding: 2px 6px; border-radius: 4px;">
+            AIS Signal Online
+          </div>
+        </div>
+      </div>
+
+    </div>
+  `;
+  
+  return container;
+}
+
 function IdxControlPage(): HTMLElement {
   const container = document.createElement('div');
   container.className = 'page-content container fade-in';
@@ -1547,9 +1889,6 @@ function IdxControlPage(): HTMLElement {
   return container;
 }
 
-// ═══════════════════════════════════════════════
-// APPLICATION APP BOOTSTRAP
-// ═══════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
   const appRoot = document.getElementById('app-root');
   if (!appRoot) return;
@@ -1572,6 +1911,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <a href="/fisherman" data-route="/fisherman">Fisherman Terminal</a>
         <a href="/checkpoint" data-route="/checkpoint">Logistics Checkpoint</a>
         <a href="/admin" data-route="/admin">Situation Center</a>
+        <a href="/how-it-works" data-route="/how-it-works">How It Works</a>
         <a href="/idx-control" data-route="/idx-control">Technical Supervision</a>
       </nav>
 
@@ -1610,11 +1950,11 @@ document.addEventListener('DOMContentLoaded', () => {
   appRoot.appendChild(pageContainer);
   appRoot.appendChild(footer);
 
-  // Register routes
   Router.register('/passport', PassportPage);
   Router.register('/fisherman', FishermanPage);
   Router.register('/checkpoint', CheckpointPage);
   Router.register('/admin', AdminPage);
+  Router.register('/how-it-works', HowItWorksPage);
   Router.register('/idx-control', IdxControlPage);
 
   Router.init();

@@ -25,6 +25,10 @@ export interface CatchTransaction {
   currentStage: number;
   gyroAngle: number;
   stages: SupplyChainStage[];
+  aisStatus: "Active" | "Blackout" | "Mismatch";
+  vesselsDetectedOnPhoto: number;
+  satelliteOverlayImg: string;
+  satelliteAuditLog?: string;
   hash: string;
 }
 

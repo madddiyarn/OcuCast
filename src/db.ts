@@ -31,6 +31,9 @@ const MOCK_CATCHES_RAW: Omit<CatchTransaction, 'hash'>[] = [
     coldChainStatus: "Normal",
     currentStage: 1,
     gyroAngle: 12,
+    aisStatus: "Active",
+    vesselsDetectedOnPhoto: 1,
+    satelliteOverlayImg: "",
     stages: [
       {
         stageId: 1,
@@ -60,18 +63,21 @@ const MOCK_CATCHES_RAW: Omit<CatchTransaction, 'hash'>[] = [
   },
   {
     id: "OC-2026-0002",
-    weight: 45.0,
+    weight: 98.4,
     species: "Sturgeon",
-    vessel: "Mangystau-Explorer",
+    vessel: "Mangystau-Patrol-99",
     timestamp: "2026-06-10T09:45:00Z",
     location: [44.1234, 50.8876],
-    status: "Verified",
+    status: "Suspicious",
     imageBase64: "",
     aiConfidence: 94.2,
     oilDetected: true,
     coldChainStatus: "Normal",
     currentStage: 1,
     gyroAngle: 8,
+    aisStatus: "Mismatch",
+    vesselsDetectedOnPhoto: 1,
+    satelliteOverlayImg: "",
     stages: [
       {
         stageId: 1,
@@ -101,18 +107,21 @@ const MOCK_CATCHES_RAW: Omit<CatchTransaction, 'hash'>[] = [
   },
   {
     id: "OC-2026-0003",
-    weight: 12.4,
+    weight: 185.0,
     species: "Carp",
-    vessel: "Ak-Zhol",
+    vessel: "Neptune-Carrier",
     timestamp: "2026-06-10T10:15:00Z",
     location: [43.2341, 51.5432],
-    status: "Verified",
+    status: "Suspicious",
     imageBase64: "",
     aiConfidence: 95.8,
     oilDetected: true,
     coldChainStatus: "Normal",
     currentStage: 1,
     gyroAngle: 15,
+    aisStatus: "Blackout",
+    vesselsDetectedOnPhoto: 2,
+    satelliteOverlayImg: "",
     stages: [
       {
         stageId: 1,
@@ -142,18 +151,21 @@ const MOCK_CATCHES_RAW: Omit<CatchTransaction, 'hash'>[] = [
   },
   {
     id: "OC-2026-0004",
-    weight: 4.6,
+    weight: 1.2,
     species: "Vobla",
-    vessel: "Bautino-Patrol",
+    vessel: "Bautino-Seafarer",
     timestamp: "2026-06-10T11:00:00Z",
     location: [44.8765, 51.2341],
-    status: "Suspicious",
+    status: "Verified",
     imageBase64: "",
     aiConfidence: 89.2,
     oilDetected: false,
     coldChainStatus: "Normal",
     currentStage: 1,
     gyroAngle: 12,
+    aisStatus: "Active",
+    vesselsDetectedOnPhoto: 1,
+    satelliteOverlayImg: "",
     stages: [
       {
         stageId: 1,
@@ -223,7 +235,7 @@ export function getQuotas(): QuotaLimit[] {
   }
 }
 
-function recalculateQuotaConsumption(): void {
+export function recalculateQuotaConsumption(): void {
   const catches = getCatches();
   const quotas = getQuotas();
   quotas.forEach(q => {

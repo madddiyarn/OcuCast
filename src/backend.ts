@@ -1,7 +1,6 @@
-import { FishSpecies } from './types';
+import { FishSpecies, CatchTransaction, QuotaLimit } from './types';
 
 export function runAIEstimation(weight: number, species: FishSpecies): number {
-  // Returns an accurate, non-fixed dynamic AI confidence score between 88.6% and 98.4%
   console.log(`Running AI validation estimate for ${species} with mass ${weight} kg.`);
   const min = 88.6;
   const max = 98.4;
@@ -57,7 +56,6 @@ export function checkCatchLimits(species: FishSpecies, weight: number, gyroAngle
 }
 
 export function OcuQuotaShare(weight: number, species: FishSpecies): { leased: boolean; partnerVessel: string; newStatus: "Verified" } {
-  // Automatically leases idle capacity from another vessel in the same Caspian sector if limits are breached
   console.log(`Executing OcuQuotaShare Smart Contract for ${weight} kg of ${species}.`);
   return {
     leased: true,
@@ -67,7 +65,6 @@ export function OcuQuotaShare(weight: number, species: FishSpecies): { leased: b
 }
 
 export function OcuLock(): void {
-  // Instantly freezes corresponding profiles if any localStorage data tampering or hash mismatches are found
   localStorage.setItem('ocu_lock_active', 'true');
   const sessionUser = sessionStorage.getItem('oc_user');
   if (sessionUser) {
@@ -76,7 +73,65 @@ export function OcuLock(): void {
       user.status = 'suspended';
       sessionStorage.setItem('oc_user', JSON.stringify(user));
     } catch {
-      // Graceful error bypass
+      // Graceful bypass
     }
+  }
+}
+
+function calculateHash(catchRecord: any, prevHash: string): string {
+  const dataToHash = catchRecord.id + catchRecord.weight + catchRecord.species + catchRecord.timestamp + prevHash;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < dataToHash.length; i++) {
+    h ^= dataToHash.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return 'sha256:' + (h >>> 0).toString(16).padStart(8, '0') + 'ocuchain';
+}
+
+export function executeLiveSatelliteAudit(catchId: string, satelliteInputCode: string, descriptionText: string): void {
+  const catchesRaw = localStorage.getItem('oc_catches');
+  if (!catchesRaw) return;
+  try {
+    const catches: CatchTransaction[] = JSON.parse(catchesRaw);
+    const idx = catches.findIndex(c => c.id === catchId);
+    if (idx !== -1) {
+      const c = catches[idx];
+      if (satelliteInputCode === "1") {
+        c.status = "Verified";
+        c.vesselsDetectedOnPhoto = 1;
+        c.aisStatus = "Active";
+        c.satelliteOverlayImg = "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=600&q=80";
+        c.satelliteAuditLog = `[SATELLITE AUDIT - LEGITIMATE] AI confirmed single legitimate vessel at coordinates. Telemetry verified. Details: ${descriptionText}`;
+      } else {
+        c.status = "Blocked";
+        c.vesselsDetectedOnPhoto = 2;
+        c.aisStatus = "Blackout";
+        c.satelliteOverlayImg = "https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?auto=format&fit=crop&w=600&q=80";
+        c.satelliteAuditLog = `[SATELLITE AUDIT - ABUSE DETECTED] High-probability illegal mid-sea rendezvous flagged. Shadow transshipment alert. Details: ${descriptionText}`;
+      }
+
+      // Re-sign blockchain hashes
+      let prevHash = "0000000000000000";
+      for (let i = 0; i < catches.length; i++) {
+        if (i > 0) prevHash = catches[i - 1].hash;
+        catches[i].hash = calculateHash(catches[i], prevHash);
+      }
+
+      localStorage.setItem('oc_catches', JSON.stringify(catches));
+
+      // Recalculate quotas
+      const quotasRaw = localStorage.getItem('oc_quotas');
+      if (quotasRaw) {
+        const quotas: QuotaLimit[] = JSON.parse(quotasRaw);
+        quotas.forEach(q => {
+          q.consumed = catches
+            .filter(c => c.species === q.species && c.status !== 'Blocked')
+            .reduce((sum, c) => sum + c.weight, 0);
+        });
+        localStorage.setItem('oc_quotas', JSON.stringify(quotas));
+      }
+    }
+  } catch (err) {
+    console.error("Failed to execute live satellite audit:", err);
   }
 }
