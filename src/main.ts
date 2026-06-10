@@ -801,6 +801,10 @@ function FishermanPage(): HTMLElement {
         <h3>Step 2: Optical Sample Authentication</h3>
         <p style="font-size: 13px; color: #475569; margin-bottom: 20px;">Vessel camera stream must capture the fish sample to prevent physical fraud.</p>
         
+        <div class="alert alert-cyan" style="margin-bottom: 20px; border-radius: 12px; display: block; background: #ECFEFF; border: 1.5px solid #06B6D4; color: #0891B2; font-size: 12.5px; padding: 12px; font-weight: 600;">
+          💡 Demo Mode: Hand gestures/likes are recognized by the AI model as Carp.
+        </div>
+
         <div style="background:#000; border-radius:12px; height:240px; display:flex; align-items:center; justify-content:center; overflow:hidden; position:relative; margin-bottom:20px;">
           <video id="device-camera-stream" autoplay playsinline style="width:100%; height:100%; object-fit:cover; display: ${mediaStream && !capturedBase64 ? 'block' : 'none'};"></video>
           ${capturedBase64 ? `<img src="${capturedBase64}" style="width:100%; height:100%; object-fit:cover;" />` : ''}
@@ -824,6 +828,17 @@ function FishermanPage(): HTMLElement {
       const confidence = runAIEstimation(inputWeight, selectedSpecies);
       const limitVerification = checkCatchLimits(selectedSpecies, inputWeight, 12);
 
+      let detectedType = `${selectedSpecies} (Confidence: ${confidence}%)`;
+      let freshnessIndex = `<strong style="color: #10B981;">97.2% (Fresh)</strong>`;
+      let healthCheck = `<strong style="color: #06B6D4;">No contaminants detected</strong>`;
+
+      if (selectedSpecies === "Carp") {
+        const gestureConfidence = (91 + Math.random() * 8).toFixed(1);
+        detectedType = `Hand gesture (${gestureConfidence}%)`;
+        freshnessIndex = `<strong style="color: #EF4444;">This is not a fish</strong>`;
+        healthCheck = `<strong style="color: #EF4444;">This is not a fish</strong>`;
+      }
+
       const aiAnalysisPanel = `
         <div class="ai-panel" style="margin-bottom: 20px; border: 1px solid rgba(139, 92, 246, 0.15); border-radius: 12px; background: linear-gradient(135deg, rgba(59, 130, 246, 0.02) 0%, rgba(139, 92, 246, 0.04) 100%); padding: 16px;">
           <div style="font-weight: 800; color: #8B5CF6; font-size:13.5px; margin-bottom:12px; display:flex; align-items:center; gap:6px;">
@@ -831,13 +846,13 @@ function FishermanPage(): HTMLElement {
             <span class="badge badge-purple" style="font-size:9px; background:#F5F3FF; color:#7C3AED;">Active</span>
           </div>
           <div style="font-size:12.5px; display:flex; justify-content:space-between; margin-bottom:6px;">
-            <span>Detected Fish Type:</span> <strong style="color: #7C3AED;">${selectedSpecies} (Confidence: ${confidence}%)</strong>
+            <span>Detected Fish Type:</span> <strong style="color: #7C3AED;">${detectedType}</strong>
           </div>
           <div style="font-size:12.5px; display:flex; justify-content:space-between; margin-bottom:6px;">
-            <span>Retina Freshness Index:</span> <strong style="color: #10B981;">97.2% (Fresh)</strong>
+            <span>Retina Freshness Index:</span> ${freshnessIndex}
           </div>
           <div style="font-size:12.5px; display:flex; justify-content:space-between; margin-bottom:6px;">
-            <span>Ecosystem Health Check:</span> <strong style="color: #06B6D4;">No contaminants detected</strong>
+            <span>Ecosystem Health Check:</span> ${healthCheck}
           </div>
           <div style="font-size:11px; color: #64748B; font-style: italic; margin-top: 8px; border-top: 1px dashed #E2E8F0; padding-top: 6px;">
             💡 Demo Mode: Hand gestures/likes are recognized by the AI model as Carp.
@@ -1499,6 +1514,23 @@ function AdminPage(): HTMLElement {
     const c = matches.find(item => item.id === catchId);
     if (!c) return;
 
+    let feedbackHtml = '';
+    if (c.status === 'Verified' && c.satelliteAuditLog) {
+      const accuracy = (91 + Math.random() * 8).toFixed(1);
+      feedbackHtml = `
+        <div class="alert alert-green" style="margin-bottom: 16px; border-radius: 8px; display: block;">
+          <strong>✓ Verification Accuracy ${accuracy}%:</strong> AI confirms a single legitimate vessel at coordinate telemetry. Status updated to Verified.
+        </div>
+      `;
+    } else if (c.status === 'Blocked' && c.satelliteAuditLog) {
+      const accuracy = (1 + Math.random() * 8).toFixed(1);
+      feedbackHtml = `
+        <div class="alert alert-red" style="margin-bottom: 16px; border-radius: 8px; display: block;">
+          <strong>🚨 КРИТИЧЕСКОЕ НАРУШЕНИЕ (AI Confidence: ${accuracy}%):</strong> ИИ подтвердил нелегальную перегрузку в море (shadow transshipment). Status updated to Blocked.
+        </div>
+      `;
+    }
+
     auditContainer.innerHTML = `
       <div class="card" style="padding: 24px; border-radius: 16px; border: 1.5px solid #06B6D4; background: #FAFDFE; margin-top: 8px;">
         <h3 style="font-size: 15px; font-weight: 800; color: #1E3A8A; margin-bottom: 8px;">Спутниковая проверка и АИС (Автоматический анализ ИИ)</h3>
@@ -1506,12 +1538,12 @@ function AdminPage(): HTMLElement {
           Inspecting target batch <strong>${c.id}</strong> from vessel <strong>${c.vessel}</strong>. Coordinates: [${c.location[0].toFixed(4)}, ${c.location[1].toFixed(4)}].
         </p>
 
-        <div id="audit-feedback-area"></div>
+        <div id="audit-feedback-area">${feedbackHtml}</div>
 
         <form id="satellite-audit-form" style="display: flex; flex-direction: column; gap: 14px;">
           <div class="form-group">
             <label class="form-label" style="font-weight: 700;">Description</label>
-            <input type="text" id="satellite-input-code" class="form-input" placeholder="Enter 1 or 0" value="1" required>
+            <input type="text" id="satellite-input-code" class="form-input" placeholder="Enter a description" value="" required>
           </div>
 
           <div style="display: flex; gap: 12px; margin-top: 8px;">
@@ -1522,6 +1554,10 @@ function AdminPage(): HTMLElement {
               </button>
             ` : ''}
           </div>
+
+          <div style="font-size: 12px; color: #475569; margin-top: 8px; border-top: 1px solid #E2E8F0; padding-top: 10px; font-weight: 500;">
+            ℹ️ To legalize this transaction, administration acceptance is required.
+          </div>
         </form>
       </div>
     `;
@@ -1529,33 +1565,12 @@ function AdminPage(): HTMLElement {
     const form = auditContainer.querySelector('#satellite-audit-form') as HTMLFormElement | null;
     form?.addEventListener('submit', (e) => {
       e.preventDefault();
-      const code = (auditContainer.querySelector('#satellite-input-code') as HTMLInputElement).value.trim();
-      const mockDescription = code === "1" ? "Confirming a single legitimate vessel at coordinates." : "High-probability illegal mid-sea transshipment rendezvous.";
+      const userInput = (auditContainer.querySelector('#satellite-input-code') as HTMLInputElement).value.trim();
+      const code = (userInput.includes("1") || userInput === "1") ? "1" : "0";
+      const mockDescription = userInput || (code === "1" ? "Legitimate vessel activity verified." : "Suspicious transshipment activity detected.");
 
       executeLiveSatelliteAudit(catchId, code, mockDescription);
-
-      const feedback = auditContainer.querySelector('#audit-feedback-area') as HTMLElement | null;
-      if (feedback) {
-        if (code === "1") {
-          const accuracy = (91 + Math.random() * 8).toFixed(1);
-          feedback.innerHTML = `
-            <div class="alert alert-green" style="margin-bottom: 16px; border-radius: 8px; display: block;">
-              <strong>✓ Verification Accuracy ${accuracy}%:</strong> AI confirms a single legitimate vessel at coordinate telemetry. Status updated to Verified.
-            </div>
-          `;
-        } else {
-          const accuracy = (1 + Math.random() * 8).toFixed(1);
-          feedback.innerHTML = `
-            <div class="alert alert-red" style="margin-bottom: 16px; border-radius: 8px; display: block;">
-              <strong>🚨 КРИТИЧЕСКОЕ НАРУШЕНИЕ (AI Confidence: ${accuracy}%):</strong> ИИ подтвердил нелегальную перегрузку в море (shadow transshipment). Status updated to Blocked.
-            </div>
-          `;
-        }
-      }
-
-      setTimeout(() => {
-        renderDashboard();
-      }, 1500);
+      renderDashboard();
     });
 
     const btnLease = auditContainer.querySelector('#btn-legalize-direct') as HTMLButtonElement | null;
@@ -1564,6 +1579,14 @@ function AdminPage(): HTMLElement {
         const leaseResult = OcuQuotaShare(c.weight, c.species);
         if (leaseResult.leased) {
           updateCatchStatus(c.id, leaseResult.newStatus);
+          
+          const catches = getCatches();
+          const matchIdx = catches.findIndex(item => item.id === c.id);
+          if (matchIdx !== -1) {
+            catches[matchIdx].satelliteAuditLog = `Smart lease approved. Unused quota leased from Caspian vessel ${leaseResult.partnerVessel}.`;
+            localStorage.setItem('oc_catches', JSON.stringify(catches));
+          }
+
           alert(`Smart lease approved. Unused quota leased from Caspian vessel ${leaseResult.partnerVessel}. Anomalous transaction approved.`);
           renderDashboard();
         }
