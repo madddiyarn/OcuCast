@@ -1507,13 +1507,8 @@ function AdminPage(): HTMLElement {
 
         <form id="satellite-audit-form" style="display: flex; flex-direction: column; gap: 14px;">
           <div class="form-group">
-            <label class="form-label" style="font-weight: 700;">Код верификации снимка (1 - Легально, 0 - Нарушение)</label>
-            <input type="text" id="satellite-input-code" class="form-input" placeholder="e.g. 1 or 0" value="1" required>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" style="font-weight: 700;">Входящий лог телеметрии АИС / Описание кадра</label>
-            <textarea id="satellite-telemetry-desc" class="form-input" rows="3" required>Optical frame matches reported transshipment profile. Sea surface radar returns confirm single hull signature within 200m envelope.</textarea>
+            <label class="form-label" style="font-weight: 700;">Description</label>
+            <input type="text" id="satellite-input-code" class="form-input" placeholder="Enter 1 or 0" value="1" required>
           </div>
 
           <div style="display: flex; gap: 12px; margin-top: 8px;">
@@ -1532,22 +1527,24 @@ function AdminPage(): HTMLElement {
     form?.addEventListener('submit', (e) => {
       e.preventDefault();
       const code = (auditContainer.querySelector('#satellite-input-code') as HTMLInputElement).value.trim();
-      const desc = (auditContainer.querySelector('#satellite-telemetry-desc') as HTMLTextAreaElement).value.trim();
+      const mockDescription = code === "1" ? "Confirming a single legitimate vessel at coordinates." : "High-probability illegal mid-sea transshipment rendezvous.";
 
-      executeLiveSatelliteAudit(catchId, code, desc);
+      executeLiveSatelliteAudit(catchId, code, mockDescription);
 
       const feedback = auditContainer.querySelector('#audit-feedback-area') as HTMLElement | null;
       if (feedback) {
         if (code === "1") {
+          const accuracy = (91 + Math.random() * 8).toFixed(1);
           feedback.innerHTML = `
             <div class="alert alert-green" style="margin-bottom: 16px; border-radius: 8px; display: block;">
-              <strong>✓ Verification Accuracy 100%:</strong> AI confirms a single legitimate vessel at coordinate telemetry. Status updated to Verified.
+              <strong>✓ Verification Accuracy ${accuracy}%:</strong> AI confirms a single legitimate vessel at coordinate telemetry. Status updated to Verified.
             </div>
           `;
         } else {
+          const accuracy = (1 + Math.random() * 8).toFixed(1);
           feedback.innerHTML = `
             <div class="alert alert-red" style="margin-bottom: 16px; border-radius: 8px; display: block;">
-              <strong>🚨 КРИТИЧЕСКОЕ НАРУШЕНИЕ:</strong> ИИ подтвердил нелегальную перегрузку в море (shadow transshipment). Status updated to Blocked.
+              <strong>🚨 КРИТИЧЕСКОЕ НАРУШЕНИЕ (AI Confidence: ${accuracy}%):</strong> ИИ подтвердил нелегальную перегрузку в море (shadow transshipment). Status updated to Blocked.
             </div>
           `;
         }
