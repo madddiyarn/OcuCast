@@ -1,11 +1,43 @@
-import { DB, OcuChain, API_BASE } from './db';
-import { checkAntiGravity, leaseQuota, breakBlockchainIntegrity } from './backend';
-import { CatchRecord, Fisherman } from './types';
+import { CatchTransaction, FishSpecies, SupplyChainStage } from './types';
+import { getCatches, saveCatch, updateCatchStatus, addStageToCatch, getQuotas, verifyBlockchainIntegrity } from './db';
+import { runAIEstimation, checkCatchLimits, OcuQuotaShare, OcuLock } from './backend';
 
-// Declare Leaflet global type
 declare const L: any;
 
-// Simple SPA Router
+let globalPassportMap: any = null;
+let globalAdminMap: any = null;
+
+const Session = {
+  getCurrentUser(): { username: string; vessel: string; status: 'approved' | 'pending' | 'suspended' } | null {
+    try {
+      return JSON.parse(sessionStorage.getItem('oc_user') || 'null');
+    } catch {
+      return null;
+    }
+  },
+  setCurrentUser(u: { username: string; vessel: string; status: 'approved' | 'pending' | 'suspended' } | null) {
+    if (u) {
+      sessionStorage.setItem('oc_user', JSON.stringify(u));
+    } else {
+      sessionStorage.removeItem('oc_user');
+    }
+  },
+  isAdminLoggedIn(): boolean {
+    return sessionStorage.getItem('oc_admin') === 'true';
+  },
+  setAdminLoggedIn(val: boolean) {
+    if (val) {
+      sessionStorage.setItem('oc_admin', 'true');
+    } else {
+      sessionStorage.removeItem('oc_admin');
+    }
+  },
+  logout() {
+    this.setCurrentUser(null);
+    this.setAdminLoggedIn(false);
+  }
+};
+
 const Router = {
   routes: {} as Record<string, () => HTMLElement>,
   currentPath: '/passport',
@@ -23,12 +55,28 @@ const Router = {
   },
 
   render(path: string) {
-    const route = this.routes[path] || this.routes['/passport'];
-    this.currentPath = path;
-    
+    const isLocked = localStorage.getItem('ocu_lock_active') === 'true';
     const container = document.getElementById('page-container');
+    
     if (container) {
       container.innerHTML = '';
+      if (isLocked) {
+        container.appendChild(renderOcuLockScreen());
+        this._updateNav('/idx-control');
+        return;
+      }
+
+      // Check blockchain integrity on render to protect indices
+      const integrity = verifyBlockchainIntegrity();
+      if (!integrity.valid) {
+        OcuLock();
+        container.appendChild(renderOcuLockScreen());
+        this._updateNav('/idx-control');
+        return;
+      }
+
+      const route = this.routes[path] || this.routes['/passport'];
+      this.currentPath = path;
       container.appendChild(route());
     }
     this._updateNav(path);
@@ -62,21 +110,36 @@ const Router = {
   }
 };
 
-// ═══════════════════════════════════════════════
-// SESSION MANAGER
-// ═══════════════════════════════════════════════
-const Session = {
-  getCurrentUser(): Fisherman | null {
-    try { return JSON.parse(sessionStorage.getItem('oc_user') || 'null'); } catch { return null; }
-  },
-  setCurrentUser(u: Fisherman | null) {
-    if (u) sessionStorage.setItem('oc_user', JSON.stringify(u));
-    else sessionStorage.removeItem('oc_user');
-  },
-  logout() {
-    this.setCurrentUser(null);
+function renderOcuLockScreen(): HTMLElement {
+  const container = document.createElement('div');
+  container.className = 'container fade-in';
+  container.style.maxWidth = '600px';
+  container.style.margin = '80px auto';
+  container.style.textAlign = 'center';
+  container.innerHTML = `
+    <div class="card" style="padding: 40px; border-radius: 16px; border: 2px solid #EF4444; background: #FFF5F5;">
+      <div style="font-size: 48px; margin-bottom: 20px;">🔒</div>
+      <h2 style="color: #EF4444; font-weight: 800; font-size: 24px; margin-bottom: 16px;">OcuLock System Freeze Active</h2>
+      <p style="color: #475569; font-size: 14px; line-height: 1.6; margin-bottom: 24px;">
+        A cryptographic integrity breach has been detected in the OcuChain ledger database files. 
+        All fishing profiles for this vessel have been temporarily suspended to protect against data tampering.
+      </p>
+      <button id="btn-reset-system" class="btn btn-primary" style="background: #1E3A8A;">
+        System Reboot & Re-verify Ledger
+      </button>
+    </div>
+  `;
+  const btnReset = container.querySelector('#btn-reset-system') as HTMLButtonElement | null;
+  if (btnReset) {
+    btnReset.onclick = () => {
+      localStorage.removeItem('ocu_lock_active');
+      localStorage.removeItem('oc_catches');
+      localStorage.removeItem('oc_quotas');
+      window.location.reload();
+    };
   }
-};
+  return container;
+}
 
 // ═══════════════════════════════════════════════
 // PAGE 1: DIGITAL PASSPORT
@@ -84,1105 +147,1174 @@ const Session = {
 function PassportPage(): HTMLElement {
   const container = document.createElement('div');
   container.className = 'page-content container fade-in';
-  
-  let searchId = 'OC-2026-000184';
-  let mapInstance: any = null;
+
+  let activeRecordId = "";
 
   function renderView() {
-    const activeCatch = DB.catches.find(c => c.id === searchId) || DB.catches[0];
-    if (!activeCatch) {
-      container.innerHTML = `<h3>Записей не обнаружено. Сначала добавьте улов.</h3>`;
-      return;
+    if (!activeRecordId) {
+      renderSearchDashboard();
+    } else {
+      const records = getCatches();
+      const match = records.find(r => r.id === activeRecordId);
+      if (match) {
+        renderPassportSheet(match);
+      } else {
+        activeRecordId = "";
+        renderSearchDashboard();
+      }
+    }
+  }
+
+  function renderSearchDashboard() {
+    container.innerHTML = `
+      <div class="card" style="max-width: 500px; margin: 40px auto; padding: 32px; border-radius: 16px; box-shadow: var(--shadow-md);">
+        <h2 style="font-size: 20px; font-weight: 800; color: #1E3A8A; text-align: center; margin-bottom: 8px;">Digital Fish Traceability Lookup</h2>
+        <p style="color: #475569; font-size: 13px; text-align: center; margin-bottom: 24px;">Fish Resources Department of Mangystau Region</p>
+        
+        <div class="form-group" style="margin-bottom: 24px;">
+          <label class="form-label">Enter OcuCast ID Manually</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="manual-passport-id" class="form-input" placeholder="e.g. OC-2026-0001" value="OC-2026-0001">
+            <button id="btn-retrieve-manual" class="btn btn-primary" style="background: #1E3A8A; white-space: nowrap;">Retrieve</button>
+          </div>
+        </div>
+        <div style="text-align: center; margin-bottom: 20px; color: var(--text-muted); font-size: 14px;">— OR —</div>
+        <button id="btn-scan-qr-passport" class="btn btn-cyan btn-block" style="background: #06B6D4; color: white;">Scan Passport QR Code</button>
+      </div>
+
+      <div id="qr-scanner-overlay" style="display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.85); flex-direction: column; align-items: center; justify-content: center; z-index: 2000;">
+        <div class="card" style="padding: 24px; text-align: center; max-width: 400px; background: white; border-radius: 16px;">
+          <h3 style="font-size: 18px; font-weight: 800; color: #1E3A8A; margin-bottom: 12px;">Active Scanner Device Stream</h3>
+          <p style="font-size: 13px; color: #475569; margin-bottom: 20px;">Positioning optical sensor calibration camera...</p>
+          <div style="width: 280px; height: 200px; background: #000; border-radius: 8px; margin: 0 auto 20px; position: relative; overflow: hidden;">
+            <div style="position: absolute; inset: 20px; border: 2px dashed #06B6D4; animation: pulse 1.5s infinite;"></div>
+            <div style="color: white; font-family: monospace; font-size: 12px; margin-top: 90px; text-align: center;">SCANNING FOR QR CODES...</div>
+          </div>
+          <button id="btn-cancel-scan" class="btn btn-ghost">Cancel</button>
+        </div>
+      </div>
+    `;
+
+    const btnRetrieve = container.querySelector('#btn-retrieve-manual') as HTMLButtonElement | null;
+    const txtInput = container.querySelector('#manual-passport-id') as HTMLInputElement | null;
+    if (btnRetrieve && txtInput) {
+      btnRetrieve.onclick = () => {
+        const id = txtInput.value.trim();
+        const catches = getCatches();
+        const found = catches.some(c => c.id === id);
+        if (found) {
+          activeRecordId = id;
+          renderView();
+        } else {
+          alert('Traceability code not recognized on ledger.');
+        }
+      };
     }
 
-    const totalValue = (activeCatch.weight_kg * activeCatch.price_per_kg).toLocaleString('ru-KZ');
-    const timelineHtml = activeCatch.supply_chain.map((step, idx) => {
-      const isDone = step.done;
-      const dotClass = isDone ? (idx === activeCatch.supply_chain.filter(s => s.done).length - 1 ? 'current' : 'done') : 'pending';
-      const icon = step.stage === 'sea' ? '⚓' : step.stage === 'port' ? '🏗️' : step.stage === 'factory' ? '🏭' : '🛒';
+    const btnScan = container.querySelector('#btn-scan-qr-passport') as HTMLButtonElement | null;
+    const scanOverlay = container.querySelector('#qr-scanner-overlay') as HTMLElement | null;
+    const btnCancelScan = container.querySelector('#btn-cancel-scan') as HTMLButtonElement | null;
+
+    if (btnScan && scanOverlay) {
+      btnScan.onclick = () => {
+        scanOverlay.style.display = 'flex';
+        setTimeout(() => {
+          scanOverlay.style.display = 'none';
+          const catches = getCatches();
+          if (catches.length > 0) {
+            activeRecordId = catches[0].id;
+            renderView();
+          }
+        }, 1800);
+      };
+    }
+
+    if (btnCancelScan && scanOverlay) {
+      btnCancelScan.onclick = () => {
+        scanOverlay.style.display = 'none';
+      };
+    }
+  }
+
+  function renderPassportSheet(c: CatchTransaction) {
+    const timelineHtml = c.stages.map((step) => {
+      const isDone = !!step.timestamp;
+      const dotClass = isDone ? 'done' : 'pending';
+      const icon = step.stageId === 1 ? '⚓' : step.stageId === 2 ? '🏗️' : '🏭';
 
       return `
         <div class="timeline-item">
           <div class="timeline-dot ${dotClass}">
             ${isDone ? '✓' : icon}
           </div>
-          <div class="timeline-time">${step.time ? new Date(step.time).toLocaleString('ru-RU') : 'В очереди'}</div>
-          <div class="timeline-title">${step.label}</div>
+          <div class="timeline-time">${step.timestamp ? new Date(step.timestamp).toLocaleString('en-US') : 'In queue'}</div>
+          <div class="timeline-title">${step.name}</div>
           <div class="timeline-desc">
             ${isDone 
-              ? `Подтвердил инспектор: <strong>${step.inspector}</strong>. ${step.temp !== null ? `Темп. контейнера: <span class="badge badge-cyan">${step.temp}°C Guard</span>` : ''}` 
-              : 'Ожидается верификация на КПП.'}
+              ? `Checked by: <strong>${step.checkedBy}</strong>. Location: <strong>${step.location}</strong>. [${step.verificationType}]` 
+              : 'Awaiting checkpoint clearance.'}
           </div>
         </div>
       `;
     }).join('');
 
+    const statusColors: Record<string, string> = {
+      Verified: 'badge-green',
+      Suspicious: 'badge-amber',
+      Blocked: 'badge-red',
+      Pending: 'badge-blue'
+    };
+
     container.innerHTML = `
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; flex-wrap: wrap; gap: 16px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 16px;">
         <div>
-          <h1 style="font-size: 28px; font-weight: 800; color: var(--navy); letter-spacing: -0.5px;">Цифровой Паспорт Улова</h1>
-          <p style="color: var(--text-secondary); font-size: 14px;">Публичный реестр верифицированных партий рыбы Каспия</p>
+          <button id="btn-back-to-search" class="btn btn-ghost btn-sm" style="margin-bottom: 8px;">← New Search</button>
+          <h1 style="font-size: 24px; font-weight: 800; color: #1E3A8A; letter-spacing: -0.5px;">Digital Fish Passport</h1>
+          <p style="color: #475569; font-size: 13px;">Official traceability ledger records - Mangystau Region</p>
         </div>
-        <div style="display: flex; gap: 8px;">
-          <input type="text" id="passport-search-input" class="form-input" placeholder="Введите ID улова (например, OC-2026-000184)" style="width: 300px;" value="${searchId}">
-          <button id="passport-search-btn" class="btn btn-primary">Поиск</button>
+        <div>
+          <button id="btn-download-pdf-passport" class="btn btn-primary" style="background: #1E3A8A;">📥 Download Official Certificate</button>
         </div>
       </div>
 
       <div style="display: grid; grid-template-columns: 1.6fr 1fr; gap: 32px;" class="passport-grid">
         
-        <!-- Официальный Бланк -->
-        <div class="card" style="border: 2px solid #E2E8F0; border-radius: 16px;">
-          <div style="background: #F8FAFC; border-bottom: 1.5px solid #E2E8F0; padding: 24px; text-align: center;">
-            <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: var(--text-secondary);">Управление рыбного хозяйства Мангистауской области</div>
-            <div style="font-size: 14px; font-weight: 700; color: var(--navy); margin-top: 4px;">ЦИФРОВОЙ СЕРТИФИКАТ ПРОИСХОЖДЕНИЯ БИОРЕСУРСОВ</div>
+        <div class="card" style="border: 1.5px solid #E2E8F0; border-radius: 16px;">
+          <div style="background: #F8FAFC; border-bottom: 1px solid #E2E8F0; padding: 20px; text-align: center;">
+            <div style="font-size: 10px; font-weight: 800; text-transform: uppercase; color: #475569; letter-spacing: 0.5px;">Mangystau Region Fish Resources Department</div>
+            <div style="font-size: 13px; font-weight: 700; color: #1E3A8A; margin-top: 4px;">OFFICIAL BIOLOGICAL RESOURCES CERTIFICATE OF ORIGIN</div>
           </div>
           <div class="card-body">
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px dashed #E2E8F0;">
               <div>
-                <span style="font-size: 11px; color: var(--text-muted);">Идентификатор улова:</span>
-                <div style="font-size: 16px; font-weight: 800; color: var(--navy);">${searchId}</div>
+                <span style="font-size: 11px; color: var(--text-muted);">Batch ID:</span>
+                <div style="font-size: 15px; font-weight: 800; color: #1E3A8A;">${c.id}</div>
               </div>
               <div>
-                <span style="font-size: 11px; color: var(--text-muted);">Судно / Лицензия:</span>
-                <div style="font-size: 15px; font-weight: 700;">${activeCatch.vessel}</div>
+                <span style="font-size: 11px; color: var(--text-muted);">Vessel:</span>
+                <div style="font-size: 14px; font-weight: 700;">${c.vessel}</div>
               </div>
               <div>
-                <span style="font-size: 11px; color: var(--text-muted);">Зарегистрированный вид:</span>
-                <div style="font-size: 15px; font-weight: 700;">${activeCatch.species}</div>
+                <span style="font-size: 11px; color: var(--text-muted);">Registered Species:</span>
+                <div style="font-size: 14px; font-weight: 700;">${c.species}</div>
               </div>
               <div>
-                <span style="font-size: 11px; color: var(--text-muted);">Масса (Верифицирована):</span>
-                <div style="font-size: 16px; font-weight: 800; color: var(--cyan-dark);">${activeCatch.weight_kg} кг <span class="badge badge-green">Hardware verified</span></div>
+                <span style="font-size: 11px; color: var(--text-muted);">Net Weight:</span>
+                <div style="font-size: 15px; font-weight: 800; color: #06B6D4;">${c.weight} kg <span class="badge badge-green" style="font-size:9px;">Sensor verified</span></div>
+              </div>
+              <div>
+                <span style="font-size: 11px; color: var(--text-muted);">Cold Chain Status:</span>
+                <div style="font-size: 13px; font-weight: 700; color: ${c.coldChainStatus === 'Violation' ? '#EF4444' : '#10B981'};">${c.coldChainStatus}</div>
+              </div>
+              <div>
+                <span style="font-size: 11px; color: var(--text-muted);">AI Validation Confidence:</span>
+                <div style="font-size: 13px; font-weight: 700; color: #8B5CF6;">${c.aiConfidence}%</div>
               </div>
             </div>
 
-            ${activeCatch.quota_share_used 
-              ? `<div class="alert alert-cyan" style="margin-bottom: 24px;">
-                  ⚡ <strong>OcuQuota Share:</strong> Лимит легализован через биржу квот Smart-Exchange с донором <strong>"${activeCatch.quota_share_partner_name || 'Каспий-Стар'}"</strong>.
-                 </div>`
-              : `<div class="alert alert-green" style="margin-bottom: 24px;">
-                  ✓ Стандартный вылов. Квоты судна соответствуют нормативу.
-                 </div>`
-            }
+            <div style="margin-bottom: 24px;">
+              <span style="font-size: 11px; color: var(--text-muted);">Verification Status:</span>
+              <div style="margin-top: 4px;"><span class="badge ${statusColors[c.status] || 'badge-blue'}">${c.status}</span></div>
+            </div>
 
-            <h3 style="font-size: 14px; font-weight: 800; margin-bottom: 16px; color: var(--navy);">⛓️ ЭТАПЫ ЦЕПОЧКИ ПОСТАВОК (TRACEABILITY TIMELINE)</h3>
+            <h3 style="font-size: 13px; font-weight: 800; margin-bottom: 16px; color: #1E3A8A; text-transform: uppercase;">⛓️ Supply Chain Traceability Timeline</h3>
             <div class="timeline">${timelineHtml}</div>
 
-            <div style="margin-top: 24px; padding: 12px; background: #F8FAFC; border-radius: 8px; font-family: monospace; font-size: 10px; color: var(--text-secondary);">
-              Блокчейн-подпись: ${activeCatch.hash}
-            </div>
-            
-            <div style="display:flex; justify-content:flex-end; margin-top:20px;">
-              <button onclick="alert('Печать PDF бланка инициирована.')" class="btn btn-outline">📥 Скачать PDF бланка</button>
+            <div style="margin-top: 24px; padding: 12px; background: #F8FAFC; border-radius: 8px; font-family: monospace; font-size: 10px; color: #475569; word-break: break-all;">
+              OcuChain Blockchain Signature: ${c.hash}
             </div>
           </div>
         </div>
 
-        <!-- Боковая Панель: Спутниковая Карта и Цены -->
         <div style="display: flex; flex-direction: column; gap: 24px;">
           <div class="card" style="border-radius: 16px;">
             <div class="card-header">
-              <div class="card-title">Спутниковое позиционирование</div>
+              <div class="card-title">Caspian Satellite Position</div>
             </div>
             <div class="card-body" style="padding: 0;">
-              <div id="passport-map" style="height: 250px; width: 100%;"></div>
-            </div>
-          </div>
-
-          <div class="card" style="background: linear-gradient(135deg, rgba(30,58,138,0.03) 0%, rgba(6,182,212,0.04) 100%); border-radius: 16px;">
-            <div class="card-body">
-              <div style="font-size: 12px; color: var(--text-muted); text-transform: uppercase;">Индекс цены Минсельхоза РК (OcuPrice)</div>
-              <div style="font-size: 26px; font-weight: 900; color: var(--navy); margin: 8px 0;">${totalValue} KZT</div>
-              <div style="font-size: 12px; color: var(--text-secondary);">Рекомендованная цена: ${activeCatch.price_per_kg} KZT/кг. Перекупщики не могут занизить цену.</div>
+              <div id="passport-map" style="height: 280px; width: 100%;"></div>
             </div>
           </div>
         </div>
       </div>
     `;
 
-    const searchBtn = container.querySelector('#passport-search-btn') as HTMLButtonElement | null;
-    if (searchBtn) {
-      searchBtn.onclick = () => {
-        const valInput = container.querySelector('#passport-search-input') as HTMLInputElement;
-        const found = DB.catches.find(c => c.id === valInput.value.trim());
-        if (found) {
-          searchId = found.id;
-          renderView();
-        } else {
-          alert('Улов с таким ID не найден.');
-        }
+    const btnBack = container.querySelector('#btn-back-to-search') as HTMLButtonElement | null;
+    if (btnBack) {
+      btnBack.onclick = () => {
+        activeRecordId = "";
+        renderView();
       };
     }
 
-    initMap(activeCatch);
+    const btnPrint = container.querySelector('#btn-download-pdf-passport') as HTMLButtonElement | null;
+    if (btnPrint) {
+      btnPrint.onclick = () => {
+        printPassportPDF(c);
+      };
+    }
+
+    initPassportMap("passport-map", c.location, c.id, c.species, c.weight);
   }
 
-  function initMap(c: CatchRecord) {
+  function printPassportPDF(c: CatchTransaction) {
+    const printContent = `
+      <html>
+        <head>
+          <title>OcuCast Official PDF Certificate - ${c.id}</title>
+          <style>
+            body { font-family: 'Inter', sans-serif; padding: 40px; color: #0F172A; background: #FFFFFF; }
+            .header { text-align: center; border-bottom: 2px solid #1E3A8A; padding-bottom: 20px; margin-bottom: 30px; }
+            .title { font-size: 22px; font-weight: 800; color: #1E3A8A; text-transform: uppercase; }
+            .subtitle { font-size: 12px; font-weight: 600; color: #06B6D4; letter-spacing: 1px; }
+            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; }
+            .field { margin-bottom: 10px; }
+            .label { font-size: 11px; color: #64748B; text-transform: uppercase; font-weight: bold; }
+            .value { font-size: 15px; font-weight: 700; color: #0F172A; }
+            .badge { display: inline-block; padding: 4px 10px; border-radius: 9999px; font-size: 12px; font-weight: bold; }
+            .badge-verified { background: #D1FAE5; color: #065F46; }
+            .badge-suspicious { background: #FEF3C7; color: #92400E; }
+            .badge-blocked { background: #FEE2E2; color: #991B1B; }
+            .timeline { margin-top: 30px; }
+            .timeline-item { border-left: 2px solid #E2E8F0; padding-left: 20px; margin-bottom: 15px; position: relative; }
+            .timeline-item::before { content: ''; width: 10px; height: 10px; border-radius: 50%; background: #06B6D4; position: absolute; left: -6px; top: 4px; }
+            .hash { font-family: monospace; font-size: 11px; background: #F8FAFC; padding: 10px; border-radius: 6px; word-break: break-all; margin-top: 40px; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div class="subtitle">Mangystau Region Fish Resources Department</div>
+            <div class="title">Official Digital Certificate of Origin</div>
+          </div>
+          <div class="grid">
+            <div class="field">
+              <div class="label">Catch Identifier</div>
+              <div class="value">${c.id}</div>
+            </div>
+            <div class="field">
+              <div class="label">Fishing Vessel</div>
+              <div class="value">${c.vessel}</div>
+            </div>
+            <div class="field">
+              <div class="label">Species</div>
+              <div class="value">${c.species}</div>
+            </div>
+            <div class="field">
+              <div class="label">Weight</div>
+              <div class="value">${c.weight} kg</div>
+            </div>
+            <div class="field">
+              <div class="label">Verification Status</div>
+              <div class="value"><span class="badge badge-${c.status.toLowerCase()}">${c.status}</span></div>
+            </div>
+            <div class="field">
+              <div class="label">Timestamp</div>
+              <div class="value">${new Date(c.timestamp).toUTCString()}</div>
+            </div>
+          </div>
+          
+          <div class="timeline">
+            <h3>Supply Chain Tracking Stages</h3>
+            ${c.stages.map(s => `
+              <div class="timeline-item">
+                <div><strong>${s.name}</strong> - ${s.location}</div>
+                <div style="font-size: 12px; color: #64748B;">Checked by ${s.checkedBy} on ${s.timestamp ? new Date(s.timestamp).toUTCString() : 'Pending'}</div>
+              </div>
+            `).join('')}
+          </div>
+
+          <div class="hash">
+            OcuChain Cryptographic Seal: ${c.hash}
+          </div>
+        </body>
+      </html>
+    `;
+
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = 'none';
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentWindow?.document || iframe.contentDocument;
+    if (doc) {
+      doc.open();
+      doc.write(printContent);
+      doc.close();
+    }
+
     setTimeout(() => {
-      const mapDiv = container.querySelector('#passport-map');
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+      document.body.removeChild(iframe);
+    }, 500);
+  }
+
+  function initPassportMap(containerId: string, location: [number, number], id: string, species: string, weight: number) {
+    setTimeout(() => {
+      if (globalPassportMap) {
+        try {
+          globalPassportMap.remove();
+        } catch (e) {
+          console.warn("Failed to remove Leaflet map instance:", e);
+        }
+        globalPassportMap = null;
+      }
+
+      const mapDiv = document.getElementById(containerId);
       if (!mapDiv) return;
-      if (mapInstance) mapInstance.remove();
+      mapDiv.innerHTML = '';
 
-      mapInstance = L.map(mapDiv).setView([c.gps_lat, c.gps_lng], 10);
-      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-        attribution: 'Esri Satellite'
-      }).addTo(mapInstance);
+      try {
+        globalPassportMap = L.map(containerId).setView(location, 9);
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+          attribution: 'Esri Satellite'
+        }).addTo(globalPassportMap);
 
-      L.marker([c.gps_lat, c.gps_lng]).addTo(mapInstance)
-        .bindPopup(`<strong>Улов ${c.id}</strong><br>${c.species}, ${c.weight_kg} кг`)
-        .openPopup();
-    }, 150);
+        L.marker(location).addTo(globalPassportMap)
+          .bindPopup(`<strong>Batch: ${id}</strong><br>Mangystau Caspian Sector<br>${species} - ${weight} kg`)
+          .openPopup();
+
+        const pathCoordinates = [
+          [44.5367, 50.2567],
+          location
+        ];
+        L.polyline(pathCoordinates, { color: '#06B6D4', weight: 3 }).addTo(globalPassportMap);
+      } catch (err) {
+        console.error("Leaflet map mounting error:", err);
+      }
+    }, 100);
   }
 
   renderView();
   return container;
 }
 
+// ═══════════════════════════════════════════════
+// PAGE 2: FISHERMAN TERMINAL
+// ═══════════════════════════════════════════════
 function FishermanPage(): HTMLElement {
   const container = document.createElement('div');
   container.className = 'page-content container fade-in';
 
-  let step = 1;
-  let weight = 1.8;
-  let species = 'roach';
-  let isCameraStream = false;
-  let capturedPhoto: string | null = null;
-  let localStream: MediaStream | null = null;
+  let currentStep = 1;
+  let inputWeight = 1.8;
+  let selectedSpecies: FishSpecies = "Vobla";
+  let mediaStream: MediaStream | null = null;
+  let capturedBase64 = "";
 
   function renderView() {
     const user = Session.getCurrentUser();
-
-    if (!user || user.role !== 'fisherman') {
-      renderLogin();
-      return;
+    if (!user) {
+      renderLoginCard();
+    } else if (user.status === 'suspended') {
+      renderSuspendedNotice();
+    } else {
+      renderWizard();
     }
-
-    if (user.status === 'suspended') {
-      container.innerHTML = `
-        <div class="card" style="padding:40px; text-align:center; max-width:500px; margin: 40px auto; border-radius:16px; border:2px solid var(--red);">
-          <span style="font-size:48px;">🔒</span>
-          <h2 style="color:var(--red); margin: 16px 0 8px;">Доступ Заблокирован OcuLock</h2>
-          <p style="color:var(--text-secondary); margin-bottom:24px;">
-            В системе обнаружен разрыв цепочки хэшей. Промысловое судно временно отстранено от работы до ручной верификации Акимата.
-          </p>
-          <button id="btn-lock-logout" class="btn btn-ghost">Сменить пользователя</button>
-        </div>
-      `;
-      container.querySelector('#btn-lock-logout')?.addEventListener('click', () => {
-        Session.logout();
-        renderView();
-      });
-      return;
-    }
-
-    if (user.status === 'pending') {
-      container.innerHTML = `
-        <div class="card" style="padding:40px; text-align:center; max-width:500px; margin: 40px auto; border-radius:16px;">
-          <h2>Лицензия проверяется Акиматом</h2>
-          <p style="color:var(--text-secondary); margin:12px 0;">Дождитесь одобрения администратором ситуационного центра.</p>
-          <button id="btn-logout-wait" class="btn btn-ghost">Выйти</button>
-        </div>
-      `;
-      container.querySelector('#btn-logout-wait')?.addEventListener('click', () => { Session.logout(); renderView(); });
-      return;
-    }
-
-    renderWizard();
   }
 
-  function renderLogin() {
+  function renderLoginCard() {
     container.innerHTML = `
       <div class="login-screen">
-        <div class="login-card">
-          <h2 style="font-size:20px; font-weight:800; color:var(--navy); text-align:center; margin-bottom:24px;">OcuCast Secure Login</h2>
+        <div class="login-card" style="border-radius:16px;">
+          <h2 style="font-size:20px; font-weight:800; color:#1E3A8A; text-align:center; margin-bottom:24px;">Fisherman Portal Access</h2>
           <div id="login-err"></div>
-          <form id="form-login">
+          <form id="form-fisherman-login">
             <div class="form-group">
-              <label class="form-label">Логин капитана</label>
-              <input type="text" id="log-u" class="form-input" value="fisher1" required>
+              <label class="form-label">Captain Login ID</label>
+              <input type="text" id="log-username" class="form-input" value="fisher1" required>
             </div>
             <div class="form-group" style="margin-bottom:24px;">
-              <label class="form-label">Пароль</label>
-              <input type="password" id="log-p" class="form-input" value="demo" required>
+              <label class="form-label">Authorization Code</label>
+              <input type="password" id="log-pass" class="form-input" value="demo" required>
             </div>
-            <button class="btn btn-primary btn-block">Войти в личный кабинет</button>
+            <button class="btn btn-primary btn-block" style="background:#1E3A8A;">Authorize Vessel</button>
           </form>
         </div>
       </div>
     `;
 
-    container.querySelector('#form-login')?.addEventListener('submit', (e) => {
+    const form = container.querySelector('#form-fisherman-login');
+    form?.addEventListener('submit', (e) => {
       e.preventDefault();
-      const login = (container.querySelector('#log-u') as HTMLInputElement).value;
-      const pass = (container.querySelector('#log-p') as HTMLInputElement).value;
-      
-      const found = DB.fishermen.find(f => f.login === login && f.password === pass);
-      if (found) {
-        Session.setCurrentUser({ ...found, role: 'fisherman' } as any);
+      const login = (container.querySelector('#log-username') as HTMLInputElement).value;
+      const pass = (container.querySelector('#log-pass') as HTMLInputElement).value;
+
+      if (login === 'fisher1' && pass === 'demo') {
+        Session.setCurrentUser({ username: 'fisher1', vessel: 'Caspian-Star', status: 'approved' });
         renderView();
       } else {
         const err = container.querySelector('#login-err');
-        if (err) err.innerHTML = `<div class="alert alert-red" style="margin-bottom:12px;">Неверный пароль</div>`;
+        if (err) err.innerHTML = `<div class="alert alert-red" style="margin-bottom:12px;">Invalid login credentials.</div>`;
       }
+    });
+  }
+
+  function renderSuspendedNotice() {
+    container.innerHTML = `
+      <div class="card" style="padding:40px; text-align:center; max-width:500px; margin: 40px auto; border-radius:16px; border:2px solid #EF4444;">
+        <span style="font-size:48px;">🔒</span>
+        <h2 style="color:#EF4444; margin: 16px 0 8px;">Vessel Profiles Suspended</h2>
+        <p style="color:#475569; margin-bottom:24px;">
+          OcuLock has locked this terminal due to ledger data mismatch. Contact the Fish Resources Department of Mangystau Region.
+        </p>
+        <button id="btn-susp-logout" class="btn btn-ghost">Switch Operator</button>
+      </div>
+    `;
+    container.querySelector('#btn-susp-logout')?.addEventListener('click', () => {
+      Session.logout();
+      renderView();
     });
   }
 
   function renderWizard() {
     const user = Session.getCurrentUser()!;
-    let wizardContent = '';
+    let stepContent = "";
 
-    if (step === 1) {
-      wizardContent = `
-        <h3>Шаг 1: Калибровка веса улова</h3>
+    if (currentStep === 1) {
+      stepContent = `
+        <h3>Step 1: Scales Hardware Calibration</h3>
+        <p style="font-size: 13px; color: #475569; margin-bottom: 20px;">Ensure the vessel scales are clear before reading telemetry.</p>
+        
         <div style="text-align:center; padding:32px; background:#F8FAFC; border-radius:12px; border:1px solid #E2E8F0; margin-bottom:20px;">
-          <div style="font-size:54px; font-weight:900; color:var(--navy);" id="sim-w-display">${weight.toFixed(1)} кг</div>
-          <span class="badge badge-green">IoT Scales Connected</span>
+          <div style="font-size:54px; font-weight:900; color:#1E3A8A;" id="calib-weight-text">${inputWeight.toFixed(1)} kg</div>
+          <span class="badge badge-green">IoT Scales Telemetry Connected</span>
         </div>
 
         <div class="form-group">
-          <label class="form-label">Слайдер-симулятор веса</label>
-          <input type="range" id="sim-weight-slider" class="form-input" min="0.5" max="10.0" step="0.1" value="${weight}" style="accent-color:var(--cyan);">
+          <label class="form-label">Simulation Weight Control</label>
+          <input type="range" id="scales-simulator-slider" class="form-input" min="0.5" max="10.0" step="0.1" value="${inputWeight}">
           <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-muted); margin-top:4px;">
-            <span>0.5 кг</span>
-            <span style="color:var(--red); font-weight:bold;">4.6 кг (Вобла: биологическое превышение)</span>
-            <span>10.0 кг</span>
+            <span>0.5 kg</span>
+            <span style="color:#EF4444; font-weight:bold;">Vobla bio-limit alert test at >3.0 kg</span>
+            <span>10.0 kg</span>
           </div>
         </div>
 
-        <div class="form-group">
-          <label class="form-label">Выловленный вид рыбы</label>
-          <select id="species-select" class="form-input form-select">
-            <option value="roach" ${species === 'roach' ? 'selected' : ''}>Вобла (Лимит веса: до 3.0 кг)</option>
-            <option value="carp" ${species === 'carp' ? 'selected' : ''}>Сазан (Лимит веса: до 35.0 кг)</option>
-            <option value="sturgeon" ${species === 'sturgeon' ? 'selected' : ''}>Осетр (Лимит веса: до 120.0 кг)</option>
+        <div class="form-group" style="margin-bottom: 24px;">
+          <label class="form-label">Fish Species Target</label>
+          <select id="species-target-select" class="form-input form-select">
+            <option value="Vobla" ${selectedSpecies === 'Vobla' ? 'selected' : ''}>Vobla (Limit: ≤ 3.0 kg)</option>
+            <option value="Carp" ${selectedSpecies === 'Carp' ? 'selected' : ''}>Carp (Limit: ≤ 35.0 kg)</option>
+            <option value="Sturgeon" ${selectedSpecies === 'Sturgeon' ? 'selected' : ''}>Sturgeon (Limit: ≤ 120.0 kg)</option>
           </select>
         </div>
 
-        <button id="wiz-btn-1-next" class="btn btn-primary" style="float:right;">Перейти к камере</button>
+        <button id="btn-step1-next" class="btn btn-primary" style="float:right; background: #1E3A8A;">Configure Optical Scanner</button>
       `;
-    } else if (step === 2) {
-      wizardContent = `
-        <h3>Шаг 2: Камера и верификация биометрии</h3>
-        <div style="background:#000; border-radius:12px; height:280px; display:flex; align-items:center; justify-content:center; overflow:hidden; position:relative; margin-bottom:20px;">
-          <video id="wiz-video" autoplay playsinline style="width:100%; height:100%; object-fit:cover; display:${isCameraStream && !capturedPhoto ? 'block' : 'none'};"></video>
-          ${capturedPhoto ? `<img src="${capturedPhoto}" style="width:100%; height:100%; object-fit:cover;" />` : ''}
-          ${!isCameraStream && !capturedPhoto ? `
+    } else if (currentStep === 2) {
+      stepContent = `
+        <h3>Step 2: Optical Sample Authentication</h3>
+        <p style="font-size: 13px; color: #475569; margin-bottom: 20px;">Vessel camera stream must capture the fish sample to prevent physical fraud.</p>
+        
+        <div style="background:#000; border-radius:12px; height:240px; display:flex; align-items:center; justify-content:center; overflow:hidden; position:relative; margin-bottom:20px;">
+          <video id="device-camera-stream" autoplay playsinline style="width:100%; height:100%; object-fit:cover; display:none;"></video>
+          ${capturedBase64 ? `<img src="${capturedBase64}" style="width:100%; height:100%; object-fit:cover;" />` : ''}
+          ${!mediaStream && !capturedBase64 ? `
             <div style="text-align:center; color:#94A3B8;">
               <span style="font-size:32px;">📷</span><br>
-              <button id="btn-camera-start" class="btn btn-cyan btn-sm" style="margin-top:10px;">Запустить камеру</button>
+              <button id="btn-trigger-camera" class="btn btn-cyan btn-sm" style="margin-top:10px; background: #06B6D4;">Activate Device Camera</button>
             </div>
           ` : ''}
-          ${isCameraStream && !capturedPhoto ? `
-            <button id="btn-camera-capture" class="btn btn-cyan btn-sm" style="position:absolute; bottom:16px;">Снять кадр</button>
+          ${mediaStream && !capturedBase64 ? `
+            <button id="btn-shoot-camera" class="btn btn-cyan btn-sm" style="position:absolute; bottom:16px; background: #06B6D4;">Capture Image</button>
           ` : ''}
         </div>
 
-        <div class="ai-panel" style="display:${capturedPhoto ? 'block' : 'none'}; margin-bottom:20px;">
-          <div class="ai-panel-title">🤖 ИИ-Анализ биометрии (ML V4)</div>
-          <div style="font-size:13px; display:flex; justify-content:space-between; margin-bottom:4px;">
-            <span>Распознавание вида:</span> <strong>98%</strong>
-          </div>
-          <div style="font-size:13px; display:flex; justify-content:space-between; margin-bottom:4px;">
-            <span>Детекция аномалий чешуи/нефти:</span> <strong>94%</strong>
-          </div>
-          <div style="font-size:13px; display:flex; justify-content:space-between;">
-            <span>Индекс свежести глаза:</span> <strong>96%</strong>
-          </div>
-        </div>
-
-        <div id="wiz-antigravity-alert-container"></div>
-
-        <div style="display:flex; justify-content:space-between; margin-top:20px;">
-          <button id="wiz-btn-2-prev" class="btn btn-ghost">Назад</button>
-          <button id="wiz-btn-2-next" class="btn btn-primary" ${!capturedPhoto ? 'disabled' : ''}>Продолжить</button>
+        <div style="display:flex; justify-content:space-between;">
+          <button id="btn-step2-back" class="btn btn-ghost">Back</button>
+          <button id="btn-step2-next" class="btn btn-primary" style="background: #1E3A8A;" ${!capturedBase64 ? 'disabled' : ''}>Run AI Authentication</button>
         </div>
       `;
-    } else if (step === 3) {
-      const priceVal = species === 'sturgeon' ? 5000 : species === 'carp' ? 950 : 1200;
-      const recValue = (weight * priceVal).toLocaleString('ru-KZ');
-      wizardContent = `
-        <h3>Шаг 3: Верификация и печать бирки с QR</h3>
-        <div class="card" style="border:1px solid #E2E8F0; padding:16px; margin-bottom:20px; border-radius:12px;">
-          <div style="font-size:13px; display:flex; justify-content:space-between; margin-bottom:8px;">
-            <span>Вид рыбы:</span> <strong>${species === 'roach' ? 'Вобла' : species === 'carp' ? 'Сазан' : 'Осетр'}</strong>
+    } else if (currentStep === 3) {
+      const confidence = runAIEstimation(inputWeight, selectedSpecies);
+      const limitVerification = checkCatchLimits(selectedSpecies, inputWeight, 12);
+
+      let innerResultHTML = "";
+      if (limitVerification.mismatchFlag) {
+        innerResultHTML = `
+          <div class="alert alert-amber" style="margin-bottom:20px; border-radius: 12px; display: block;">
+            <div style="font-weight: 800; font-size:14px; margin-bottom:6px;">⚠️ AntiGravity biological mismatch detected</div>
+            <p style="font-size: 12.5px; margin-bottom: 12px; white-space: pre-wrap;">${limitVerification.text}</p>
+            <button id="btn-escalate-inspector" class="btn btn-primary btn-sm" style="background:#1E3A8A; width: 100%;">Forward to Inspector for Manual Review</button>
           </div>
-          <div style="font-size:13px; display:flex; justify-content:space-between; margin-bottom:8px;">
-            <span>Вес нетто:</span> <strong>${weight.toFixed(1)} кг</strong>
+        `;
+      } else if (limitVerification.status === "Blocked") {
+        innerResultHTML = `
+          <div class="alert alert-red" style="margin-bottom:20px; border-radius: 12px; display: block;">
+            <div style="font-weight: 800; font-size:14px; margin-bottom:6px;">❌ Critical Biological Limits Breached</div>
+            <p style="font-size: 12.5px; margin-bottom: 12px; white-space: pre-wrap;">${limitVerification.text}</p>
+            <div style="font-size: 12px; color: #7F1D1D;">Registration is locked. Smart leasing or manual clearance required.</div>
           </div>
-          <div style="font-size:13px; display:flex; justify-content:space-between; margin-bottom:8px; border-top:1px dashed #E2E8F0; padding-top:8px;">
-            <span style="color:var(--navy); font-weight:700;">Рекомендованная цена (OcuPrice):</span>
-            <strong style="color:var(--navy);">${recValue} KZT</strong>
+        `;
+      } else {
+        innerResultHTML = `
+          <div class="alert alert-green" style="margin-bottom:20px; border-radius: 12px; display: block;">
+            <div style="font-weight: 800; font-size:14px; margin-bottom:6px;">✓ Calibration verification passed</div>
+            <p style="font-size: 12.5px;">AI Confidence: <strong>${confidence}%</strong>. Species match authenticated.</p>
+          </div>
+          <button id="btn-finalize-seal" class="btn btn-primary btn-block" style="background:#1E3A8A; margin-bottom: 16px;">Register Catch and Seal Container</button>
+        `;
+      }
+
+      stepContent = `
+        <h3>Step 3: Verification Ledger Seals</h3>
+        <p style="font-size: 13px; color: #475569; margin-bottom: 20px;">System analyzes physical metrics with biological databases.</p>
+        
+        <div class="card" style="padding: 16px; border: 1px solid #E2E8F0; margin-bottom: 20px; border-radius:12px;">
+          <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:6px;">
+            <span>Fish Species:</span> <strong>${selectedSpecies}</strong>
+          </div>
+          <div style="display:flex; justify-content:space-between; font-size:13px;">
+            <span>Measured Mass:</span> <strong>${inputWeight.toFixed(1)} kg</strong>
           </div>
         </div>
 
-        <button id="btn-wiz-print" class="btn btn-cyan btn-block">🖨️ Зафиксировать и напечатать QR бирку</button>
-        <div id="print-alert-box" style="margin-top:12px;"></div>
+        ${innerResultHTML}
+        
+        <div id="finalize-success-card" style="display:none; padding:16px; background:#ECFDF5; border:1.5px solid #10B981; border-radius:12px; text-align:center;">
+          <span style="font-size: 24px;">🖨️</span>
+          <div style="color:#065F46; font-weight:800; font-size:14px; margin: 8px 0 4px;">Catch Registered & Certified</div>
+          <div style="font-size:11px; font-family:monospace; background:white; padding:8px; border-radius:6px; border:1px dashed #A7F3D0; margin-bottom:12px;">
+            OcuCast Secure Seal - Do not tamper<br>
+            CODE: <span id="final-registered-id"></span>
+          </div>
+          <button id="btn-restart-wizard" class="btn btn-cyan btn-sm" style="background:#06B6D4;">Start New Catch Registration</button>
+        </div>
 
-        <button id="wiz-btn-3-prev" class="btn btn-ghost" style="margin-top:20px;">Начать сначала</button>
+        <button id="btn-step3-back" class="btn btn-ghost" style="margin-top:10px;">Restart Calibration</button>
       `;
     }
 
     container.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:32px;">
-        <h2>Терминал фиксации рыбака</h2>
-        <p style="font-size:13px; color:var(--text-muted);">Судно: ${user.vessel} | Капитан: ${user.name}</p>
-        <button id="btn-fisher-logout" class="btn btn-outline btn-sm">Выйти</button>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px;">
+        <div>
+          <h2 style="font-size: 20px; font-weight: 800; color:#1E3A8A;">Vessel Fishing Terminal</h2>
+          <p style="font-size:13px; color:#475569;">Vessel: ${user.vessel} | Sector: Mangystau Sector C-1</p>
+        </div>
+        <button id="btn-fisherman-logout" class="btn btn-outline btn-sm">Exit Portal</button>
       </div>
+
       <div style="display:grid; grid-template-columns: 240px 1fr; gap:32px;" class="passport-grid">
         <div class="card" style="padding:16px; border-radius:16px; height:fit-content;">
-          <div style="font-weight:800; font-size:14px; margin-bottom:12px; color:var(--navy);">Мастер регистрации</div>
-          <div style="display:flex; flex-direction:column; gap:12px; font-size:13px;">
-            <div style="color:${step === 1 ? 'var(--navy)' : 'var(--text-muted)'}; font-weight:${step === 1 ? '800' : '500'};">1. Калибровка весов</div>
-            <div style="color:${step === 2 ? 'var(--navy)' : 'var(--text-muted)'}; font-weight:${step === 2 ? '800' : '500'};">2. Верификация биометрии</div>
-            <div style="color:${step === 3 ? 'var(--navy)' : 'var(--text-muted)'}; font-weight:${step === 3 ? '800' : '500'};">3. Печать защищенной бирки</div>
+          <div style="font-weight:800; font-size:13px; margin-bottom:16px; color:#1E3A8A; text-transform:uppercase;">Wizard Steps</div>
+          <div style="display:flex; flex-direction:column; gap:12px; font-size:13.5px;">
+            <div style="color:${currentStep === 1 ? '#06B6D4' : '#94A3B8'}; font-weight:${currentStep === 1 ? '800' : '500'};">1. Scales Calibration</div>
+            <div style="color:${currentStep === 2 ? '#06B6D4' : '#94A3B8'}; font-weight:${currentStep === 2 ? '800' : '500'};">2. Sample Camera</div>
+            <div style="color:${currentStep === 3 ? '#06B6D4' : '#94A3B8'}; font-weight:${currentStep === 3 ? '800' : '500'};">3. Ledger Seals</div>
           </div>
         </div>
-        <div class="card" style="padding:24px; border-radius:16px;">${wizardContent}</div>
+        <div class="card" style="padding:24px; border-radius:16px;">${stepContent}</div>
       </div>
     `;
 
-    container.querySelector('#btn-fisher-logout')?.addEventListener('click', () => {
-      Session.logout();
-      renderView();
-    });
+    const btnLogout = container.querySelector('#btn-fisherman-logout') as HTMLButtonElement | null;
+    if (btnLogout) {
+      btnLogout.onclick = () => {
+        Session.logout();
+        renderView();
+      };
+    }
 
-    if (step === 1) {
-      const slider = container.querySelector('#sim-weight-slider') as HTMLInputElement;
-      slider?.addEventListener('input', (e: any) => {
-        weight = parseFloat(e.target.value);
-        const valDisp = container.querySelector('#sim-w-display');
-        if (valDisp) valDisp.innerHTML = `${weight.toFixed(1)} кг`;
-      });
-      container.querySelector('#species-select')?.addEventListener('change', (e: any) => {
-        species = e.target.value;
-      });
-      container.querySelector('#wiz-btn-1-next')?.addEventListener('click', () => {
-        step = 2;
-        renderWizard();
-      });
-    } else if (step === 2) {
-      container.querySelector('#wiz-btn-2-prev')?.addEventListener('click', () => {
-        stopCamera();
-        step = 1;
-        renderWizard();
-      });
-
-      container.querySelector('#btn-camera-start')?.addEventListener('click', startCamera);
-      container.querySelector('#btn-camera-capture')?.addEventListener('click', captureFrame);
-
-      const btnNext = container.querySelector('#wiz-btn-2-next') as HTMLButtonElement;
-      
-      btnNext?.addEventListener('click', () => {
-        const ag = checkAntiGravity(species, weight, 12);
-        if (!ag.success) {
-          const alertBox = container.querySelector('#wiz-antigravity-alert-container');
-          if (alertBox) {
-            alertBox.innerHTML = `
-              <div class="antigravity-alert" id="ag-alert" style="border: 2px solid var(--red); border-radius: 12px; background: var(--red-light); overflow: hidden; margin-top: 16px;">
-                <div class="antigravity-header" style="background: var(--red); padding: 12px 16px; color: white; display: flex; align-items: center; gap: 8px;">
-                  <span style="font-size: 18px;">🛡️</span>
-                  <h4 style="margin: 0; font-weight: 800; font-size: 14px;">❌ AntiGravity: Транзакция заблокирована</h4>
-                </div>
-                <div class="antigravity-body" style="padding: 16px;">
-                  <pre style="white-space: pre-wrap; font-family: inherit; font-size: 13px; color: #7F1D1D; text-align: left; line-height: 1.6; margin: 0;">${ag.text}</pre>
-                  <div style="margin-top: 16px; display: flex; gap: 8px; justify-content: flex-end;">
-                    <button class="btn btn-danger btn-sm" id="btn-ag-moderate-report">
-                      📨 Отправить на ручную модерацию инспектору Акимата
-                    </button>
-                  </div>
-                </div>
-              </div>
-            `;
-            
-            container.querySelector('#btn-ag-moderate-report')?.addEventListener('click', async () => {
-              const pending = {
-                id: 'AF-' + Math.floor(Math.random() * 9000 + 1000),
-                ts: new Date().toISOString(),
-                vessel: user.vessel,
-                species: species,
-                weight: weight,
-                reason: 'Превышен биологический максимум — отправлено на модерацию',
-                status: 'pending_review',
-                sent_to_moderator: true
-              };
-
-              try {
-                await fetch(`${API_BASE}/antifrod`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(pending)
-                });
-                await DB.init();
-              } catch (e) {
-                DB.antifrodLog.push({
-                  id: pending.id,
-                  timestamp: pending.ts,
-                  vessel: pending.vessel,
-                  species: pending.species,
-                  weight: pending.weight,
-                  description: pending.reason,
-                  status: 'pending_review',
-                  sent_to_moderator: true,
-                  resolved: false
-                });
-              }
-
-              const alertEl = container.querySelector('#ag-alert');
-              if (alertEl) {
-                alertEl.innerHTML = `
-                  <div class="alert alert-amber" style="margin: 0; padding: 14px;">
-                    <span class="alert-icon">📨</span>
-                    <div><strong>Заявка отправлена на модерацию.</strong> Инспектор Акимата рассмотрит ее в ближайшее время. ID: ${pending.id}</div>
-                  </div>
-                `;
-              }
-            });
-          }
-        } else {
-          step = 3;
-          renderWizard();
-        }
-      });
-
-      if (capturedPhoto) {
-        const ag = checkAntiGravity(species, weight, 12);
-        if (!ag.success) {
-          btnNext.disabled = true;
-          const alertBox = container.querySelector('#wiz-antigravity-alert-container');
-          if (alertBox) {
-            alertBox.innerHTML = `
-              <div class="antigravity-alert" id="ag-alert" style="border: 2px solid var(--red); border-radius: 12px; background: var(--red-light); overflow: hidden; margin-top: 16px;">
-                <div class="antigravity-header" style="background: var(--red); padding: 12px 16px; color: white; display: flex; align-items: center; gap: 8px;">
-                  <span style="font-size: 18px;">🛡️</span>
-                  <h4 style="margin: 0; font-weight: 800; font-size: 14px;">❌ AntiGravity: Транзакция заблокирована</h4>
-                </div>
-                <div class="antigravity-body" style="padding: 16px;">
-                  <pre style="white-space: pre-wrap; font-family: inherit; font-size: 13px; color: #7F1D1D; text-align: left; line-height: 1.6; margin: 0;">${ag.text}</pre>
-                  <div style="margin-top: 16px; display: flex; gap: 8px; justify-content: flex-end;">
-                    <button class="btn btn-danger btn-sm" id="btn-ag-moderate-report">
-                      📨 Отправить на ручную модерацию инспектору Акимата
-                    </button>
-                  </div>
-                </div>
-              </div>
-            `;
-            
-            container.querySelector('#btn-ag-moderate-report')?.addEventListener('click', async () => {
-              const pending = {
-                id: 'AF-' + Math.floor(Math.random() * 9000 + 1000),
-                ts: new Date().toISOString(),
-                vessel: user.vessel,
-                species: species,
-                weight: weight,
-                reason: 'Превышен биологический максимум — отправлено на модерацию',
-                status: 'pending_review',
-                sent_to_moderator: true
-              };
-
-              try {
-                await fetch(`${API_BASE}/antifrod`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(pending)
-                });
-                await DB.init();
-              } catch (e) {
-                DB.antifrodLog.push({
-                  id: pending.id,
-                  timestamp: pending.ts,
-                  vessel: pending.vessel,
-                  species: pending.species,
-                  weight: pending.weight,
-                  description: pending.reason,
-                  status: 'pending_review',
-                  sent_to_moderator: true,
-                  resolved: false
-                });
-              }
-
-              const alertEl = container.querySelector('#ag-alert');
-              if (alertEl) {
-                alertEl.innerHTML = `
-                  <div class="alert alert-amber" style="margin: 0; padding: 14px;">
-                    <span class="alert-icon">📨</span>
-                    <div><strong>Заявка отправлена на модерацию.</strong> Инспектор Акимата рассмотрит ее в ближайшее время. ID: ${pending.id}</div>
-                  </div>
-                `;
-              }
-            });
-          }
-        } else {
-          btnNext.disabled = false;
-        }
-      }
-    } else if (step === 3) {
-      container.querySelector('#wiz-btn-3-prev')?.addEventListener('click', () => {
-        step = 1;
-        capturedPhoto = null;
-        renderWizard();
-      });
-
-      container.querySelector('#btn-wiz-print')?.addEventListener('click', async () => {
-        const record = {
-          fisherman_id: user.id,
-          vessel: user.vessel,
-          species: DB.speciesLimits[species]?.name_ru || species,
-          species_en: species,
-          weight_kg: weight,
-          gps_lat: 43.6521 + (Math.random() - 0.5) * 0.1,
-          gps_lng: 51.1753 + (Math.random() - 0.5) * 0.1,
-          freshness_index: 96,
-          quota_share_used: false,
-          quota_share_partner_vessel: null,
-          quota_share_partner_name: null,
-          supply_chain: [
-            { stage: 'sea', label: '⚓ Море (Вылов)', done: true, time: new Date().toISOString(), inspector: 'GPS автофиксация', temp: null, multisig: 'auto' },
-            { stage: 'port', label: '🏗️ Порт Баутино', done: false, time: null, inspector: null, temp: null, multisig: null },
-            { stage: 'factory', label: '🏭 Завод', done: false, time: null, inspector: null, temp: null, multisig: null },
-            { stage: 'retail', label: '🛒 Ритейл', done: false, time: null, inspector: null, temp: null, multisig: null }
-          ]
+    if (currentStep === 1) {
+      const slider = container.querySelector('#scales-simulator-slider') as HTMLInputElement | null;
+      if (slider) {
+        slider.oninput = (e: any) => {
+          inputWeight = parseFloat(e.target.value);
+          const txt = container.querySelector('#calib-weight-text');
+          if (txt) txt.textContent = `${inputWeight.toFixed(1)} kg`;
         };
+      }
+      const select = container.querySelector('#species-target-select') as HTMLSelectElement | null;
+      if (select) {
+        select.onchange = (e: any) => {
+          selectedSpecies = e.target.value as FishSpecies;
+        };
+      }
+      const btnNext1 = container.querySelector('#btn-step1-next') as HTMLButtonElement | null;
+      if (btnNext1) {
+        btnNext1.onclick = () => {
+          currentStep = 2;
+          renderWizard();
+        };
+      }
+    } else if (currentStep === 2) {
+      const btnBack2 = container.querySelector('#btn-step2-back') as HTMLButtonElement | null;
+      if (btnBack2) {
+        btnBack2.onclick = () => {
+          stopCamera();
+          currentStep = 1;
+          renderWizard();
+        };
+      }
+      const btnCamera = container.querySelector('#btn-trigger-camera') as HTMLButtonElement | null;
+      if (btnCamera) {
+        btnCamera.onclick = () => {
+          startCamera();
+        };
+      }
+      const btnShoot = container.querySelector('#btn-shoot-camera') as HTMLButtonElement | null;
+      if (btnShoot) {
+        btnShoot.onclick = () => {
+          shootFrame();
+        };
+      }
+      const btnNext2 = container.querySelector('#btn-step2-next') as HTMLButtonElement | null;
+      if (btnNext2) {
+        btnNext2.onclick = () => {
+          currentStep = 3;
+          renderWizard();
+        };
+      }
+    } else if (currentStep === 3) {
+      const btnBack3 = container.querySelector('#btn-step3-back') as HTMLButtonElement | null;
+      if (btnBack3) {
+        btnBack3.onclick = () => {
+          currentStep = 1;
+          capturedBase64 = "";
+          renderWizard();
+        };
+      }
 
-        const ledgerEntry = OcuChain.addEntry(record);
-        const recordWithHash = { ...record, hash: ledgerEntry.hash };
-
-        try {
-          const response = await fetch(`${API_BASE}/catches`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(recordWithHash)
-          });
-          if (response.ok) {
-            const resultRecord = await response.json();
-            await DB.init();
-            container.querySelector('#print-alert-box')!.innerHTML = `
-              <div class="alert alert-green">✓ Запись сохранена. Бирка с QR кодом распечатана на Bluetooth-принтере. ID: ${resultRecord.id}</div>
-            `;
-          }
-        } catch (e) {
-          const id = `OC-2026-${Math.floor(100000 + Math.random() * 900000)}`;
-          const offlineRecord = {
-            ...recordWithHash,
-            id,
+      const btnEscalate = container.querySelector('#btn-escalate-inspector') as HTMLButtonElement | null;
+      if (btnEscalate) {
+        btnEscalate.onclick = () => {
+          const newId = `OC-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+          const freshItem = {
+            id: newId,
+            weight: inputWeight,
+            species: selectedSpecies,
+            vessel: user.vessel,
             timestamp: new Date().toISOString(),
-            gps_label: 'Актау, море (Offline)',
-            price_per_kg: species === 'sturgeon' ? 5000 : 1200,
-            verified: true,
-            hardware_verified: true
-          } as CatchRecord;
-          DB.catches.unshift(offlineRecord);
-          container.querySelector('#print-alert-box')!.innerHTML = `
-            <div class="alert alert-green">✓ Запись создана оффлайн. Бирка распечатана. ID: ${id}</div>
-          `;
-        }
-      });
+            location: [43.6521 + (Math.random() - 0.5) * 0.1, 51.1753 + (Math.random() - 0.5) * 0.1] as [number, number],
+            status: "Suspicious" as const,
+            imageBase64: capturedBase64,
+            aiConfidence: runAIEstimation(inputWeight, selectedSpecies),
+            oilDetected: false,
+            coldChainStatus: "Normal" as const,
+            currentStage: 1,
+            gyroAngle: 12,
+            stages: DEFAULT_STAGES(newId, new Date().toISOString())
+          };
+
+          saveCatch(freshItem);
+
+          btnEscalate.style.display = "none";
+          btnBack3!.style.display = "none";
+          const successCard = container.querySelector('#finalize-success-card') as HTMLElement | null;
+          if (successCard) {
+            successCard.style.display = "block";
+            const lbl = container.querySelector('#final-registered-id');
+            if (lbl) lbl.textContent = newId;
+          }
+        };
+      }
+
+      const btnFinalize = container.querySelector('#btn-finalize-seal') as HTMLButtonElement | null;
+      if (btnFinalize) {
+        btnFinalize.onclick = () => {
+          const newId = `OC-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+          const freshItem = {
+            id: newId,
+            weight: inputWeight,
+            species: selectedSpecies,
+            vessel: user.vessel,
+            timestamp: new Date().toISOString(),
+            location: [43.6521 + (Math.random() - 0.5) * 0.1, 51.1753 + (Math.random() - 0.5) * 0.1] as [number, number],
+            status: "Verified" as const,
+            imageBase64: capturedBase64,
+            aiConfidence: runAIEstimation(inputWeight, selectedSpecies),
+            oilDetected: false,
+            coldChainStatus: "Normal" as const,
+            currentStage: 1,
+            gyroAngle: 12,
+            stages: DEFAULT_STAGES(newId, new Date().toISOString())
+          };
+
+          saveCatch(freshItem);
+
+          btnFinalize.style.display = "none";
+          btnBack3!.style.display = "none";
+          const successCard = container.querySelector('#finalize-success-card') as HTMLElement | null;
+          if (successCard) {
+            successCard.style.display = "block";
+            const lbl = container.querySelector('#final-registered-id');
+            if (lbl) lbl.textContent = newId;
+          }
+        };
+      }
+
+      const btnRestart = container.querySelector('#btn-restart-wizard') as HTMLButtonElement | null;
+      if (btnRestart) {
+        btnRestart.onclick = () => {
+          currentStep = 1;
+          capturedBase64 = "";
+          renderWizard();
+        };
+      }
     }
   }
 
   function startCamera() {
-    isCameraStream = true;
-    renderWizard();
-    setTimeout(() => {
-      const vid = container.querySelector('#wiz-video') as HTMLVideoElement;
-      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-        .then(str => {
-          localStream = str;
-          if (vid) vid.srcObject = str;
-        })
-        .catch(() => {
-          capturedPhoto = 'https://images.unsplash.com/photo-1534482421-64566f976cfa?auto=format&fit=crop&w=600&q=80';
-          isCameraStream = false;
-          renderWizard();
-        });
-    }, 100);
+    const video = container.querySelector('#device-camera-stream') as HTMLVideoElement | null;
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      .then(stream => {
+        mediaStream = stream;
+        if (video) {
+          video.srcObject = stream;
+          video.style.display = 'block';
+        }
+        renderWizard();
+      })
+      .catch(() => {
+        // Safe mock camera stream fallback
+        capturedBase64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        renderWizard();
+      });
   }
 
-  function captureFrame() {
-    const vid = container.querySelector('#wiz-video') as HTMLVideoElement;
-    if (vid && localStream) {
+  function shootFrame() {
+    const video = container.querySelector('#device-camera-stream') as HTMLVideoElement | null;
+    if (video && mediaStream) {
       const canvas = document.createElement('canvas');
-      canvas.width = vid.videoWidth || 640;
-      canvas.height = vid.videoHeight || 480;
-      canvas.getContext('2d')?.drawImage(vid, 0, 0, canvas.width, canvas.height);
-      capturedPhoto = canvas.toDataURL('image/jpeg');
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height);
+      capturedBase64 = canvas.toDataURL('image/jpeg');
       stopCamera();
       renderWizard();
     }
   }
 
   function stopCamera() {
-    if (localStream) {
-      localStream.getTracks().forEach(t => t.stop());
-      localStream = null;
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(t => t.stop());
+      mediaStream = null;
     }
-    isCameraStream = false;
   }
 
   renderView();
   return container;
 }
 
+// Helper to provide standard empty stages
+const DEFAULT_STAGES = (_id: string, dateStr: string): SupplyChainStage[] => [
+  {
+    stageId: 1,
+    name: "Sea Catch Registration",
+    location: "Mangystau Caspian Sector C-1",
+    checkedBy: "Autonomous GPS telemetry",
+    timestamp: dateStr,
+    verificationType: "QR_Verification_Scan"
+  },
+  {
+    stageId: 2,
+    name: "Port Bautino Checkpoint",
+    location: "Bautino Harbor Inspector Office",
+    checkedBy: "Inspector A. Bekova",
+    timestamp: "",
+    verificationType: "MultiSig_Bluetooth"
+  },
+  {
+    stageId: 3,
+    name: "Processing Guard Facility",
+    location: "Aktau Fish Processing Facility",
+    checkedBy: "Officer D. Nurmagambetov",
+    timestamp: "",
+    verificationType: "Digital_Stamp_Approval"
+  }
+];
+
+// ═══════════════════════════════════════════════
+// PAGE 3: LOGISTICS CHECKPOINT TERMINAL
+// ═══════════════════════════════════════════════
 function CheckpointPage(): HTMLElement {
   const container = document.createElement('div');
   container.className = 'page-content container fade-in';
 
-  let validatedCatch: CatchRecord | null = null;
+  let hasScannedQR = false;
 
-  function renderView() {
-    const user = Session.getCurrentUser();
-
-    if (!user || (user.role !== 'inspector' && user.role !== 'admin')) {
-      renderLogin();
-      return;
-    }
-
-    renderTerminal();
-  }
-
-  function renderLogin() {
+  function render() {
     container.innerHTML = `
-      <div class="login-screen">
-        <div class="login-card">
-          <h2 style="font-size:20px; font-weight:800; color:var(--navy); text-align:center; margin-bottom:24px;">Вход для инспекторов</h2>
-          <div id="inspect-login-err"></div>
-          <form id="form-inspect-login">
+      <div style="max-width: 600px; margin: 0 auto;">
+        <h2 style="font-size: 22px; font-weight: 800; color: #1E3A8A; margin-bottom: 6px;">Logistics Checkpoint Terminal</h2>
+        <p style="color: #475569; font-size: 13.5px; margin-bottom: 24px;">Harbor Inspection & Digital Verification Authority - Mangystau</p>
+        
+        <div class="card" style="padding: 28px; border-radius: 16px;">
+          <form id="checkpoint-inspect-form">
             <div class="form-group">
-              <label class="form-label">Логин инспектора</label>
-              <input type="text" id="ins-u" class="form-input" value="inspector1" required>
-            </div>
-            <div class="form-group" style="margin-bottom:24px;">
-              <label class="form-label">Пароль</label>
-              <input type="password" id="ins-p" class="form-input" value="demo" required>
-            </div>
-            <button class="btn btn-primary btn-block">Авторизоваться</button>
-          </form>
-        </div>
-      </div>
-    `;
-
-    container.querySelector('#form-inspect-login')?.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const demoInspector = { id: 'INS-01', name: 'Айгерим Бекова', role: 'inspector' };
-      Session.setCurrentUser(demoInspector as any);
-      renderView();
-    });
-  }
-
-  function renderTerminal() {
-    const user = Session.getCurrentUser()!;
-
-    container.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:32px;">
-        <h2>Регистрация нового этапа в цепи поставок</h2>
-        <button id="btn-inspect-logout" class="btn btn-outline btn-sm">Выйти</button>
-      </div>
-
-      <div style="display:grid; grid-template-columns:1.5fr 1fr; gap:32px;" class="passport-grid">
-        <div class="card" style="padding:24px; border-radius:16px;">
-          <form id="checkpoint-stage-form">
-            <div class="form-group">
-              <label class="form-label">OcuCast ID улова</label>
-              <div style="display:flex; gap:8px;">
-                <input type="text" id="chk-catch-id" class="form-input" placeholder="Например: OC-2026-000184" required>
-                <button type="button" id="btn-chk-verify" class="btn btn-outline">Проверить</button>
-              </div>
-              <div id="chk-verify-status" style="margin-top:8px;"></div>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label">Текущий логистический этап</label>
-              <select id="chk-stage-select" class="form-input form-select" disabled>
-                <option value="port">🏗️ Порт Баутино (Multi-Sig подтвержден)</option>
-                <option value="factory">🏭 Рыбозавод (-4°C Guard)</option>
-                <option value="retail">🛒 Ритейл / Прилавок</option>
+              <label class="form-label">Target OcuCast ID</label>
+              <select id="checkpoint-id-select" class="form-input form-select">
+                ${getCatches().map(c => `<option value="${c.id}">${c.id} (${c.vessel} - ${c.species})</option>`).join('')}
               </select>
             </div>
 
             <div class="form-group">
-              <label class="form-label">Температура контейнера (°C Guard)</label>
-              <input type="number" id="chk-temp-input" class="form-input" value="2" disabled>
+              <label class="form-label">Ambient Storage Temperature (°C)</label>
+              <input type="number" id="checkpoint-temp-input" class="form-input" value="-4" step="0.5">
             </div>
 
             <div class="form-group">
-              <label class="form-label">Ответственный инспектор</label>
-              <input type="text" class="form-input locked" value="${user.name}" readonly>
+              <label class="form-label">Verification Target Stage</label>
+              <select id="checkpoint-stage-select" class="form-input form-select">
+                <option value="2">Stage 2: Port Bautino Checkpoint</option>
+                <option value="3">Stage 3: Processing Guard Facility</option>
+              </select>
             </div>
 
-            <button type="button" id="btn-chk-multisig" class="btn btn-cyan btn-block" style="margin:20px 0;" disabled>
-              🤝 Сканировать QR-код рыбака для крипто-подписи
+            <div class="form-group" style="margin-bottom: 24px;">
+              <label class="form-label">Verification Methodology Split Menu</label>
+              <select id="checkpoint-methodology" class="form-input form-select">
+                <option value="QR_Verification_Scan">Direct QR Verification Scan</option>
+                <option value="MultiSig_Bluetooth">Multi-Sig Encrypted Bluetooth Handshake</option>
+                <option value="Digital_Stamp_Approval">Hardware Digital Seal Approval</option>
+              </select>
+            </div>
+
+            <div style="margin-bottom:24px; text-align:center;">
+              <button type="button" id="btn-scan-checkpoint-qr" class="btn btn-cyan btn-block" style="background:#06B6D4; color:white;">
+                Scan Batch QR
+              </button>
+              <div id="checkpoint-scan-status" style="margin-top: 10px; font-weight:700; font-size:13px; color:#EF4444;">
+                ⚠️ Scanner verification required.
+              </div>
+            </div>
+
+            <button type="submit" id="btn-submit-checkpoint" class="btn btn-primary btn-block" style="background:#1E3A8A;" disabled>
+              Register Stage and Certify
             </button>
-
-            <div id="chk-success-box"></div>
-
-            <button type="submit" id="btn-chk-submit" class="btn btn-primary btn-block" disabled>Зафиксировать этап в блокчейне</button>
           </form>
+          
+          <div id="checkpoint-feedback" style="margin-top:20px; display:none;"></div>
         </div>
+      </div>
 
-        <div class="card" style="padding:24px; border-radius:16px; height:fit-content;" id="chk-info-panel">
-          <div style="color:var(--text-muted); text-align:center; padding:40px 0;">
-            <span>🔍</span><br>Введите и верифицируйте ID улова
+      <div id="checkpoint-scanner-overlay" style="display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.85); flex-direction: column; align-items: center; justify-content: center; z-index: 2000;">
+        <div class="card" style="padding: 24px; text-align: center; max-width: 400px; background: white; border-radius: 16px;">
+          <h3 style="font-size: 18px; font-weight: 800; color: #1E3A8A; margin-bottom: 12px;">Active Scanner Device Stream</h3>
+          <p style="font-size: 13px; color: #475569; margin-bottom: 20px;">Reading QR matrix payload on fish container seal...</p>
+          <div style="width: 280px; height: 200px; background: #000; border-radius: 8px; margin: 0 auto 20px; position: relative; overflow: hidden;">
+            <div style="position: absolute; inset: 20px; border: 2px dashed #06B6D4; animation: pulse 1.5s infinite;"></div>
+            <div style="color: white; font-family: monospace; font-size: 12px; margin-top: 90px; text-align: center;">SCANNING QR SEAL...</div>
           </div>
+          <button id="btn-cancel-checkpoint-scan" class="btn btn-ghost">Cancel</button>
         </div>
       </div>
     `;
 
-    container.querySelector('#btn-inspect-logout')?.addEventListener('click', () => {
-      Session.logout();
-      renderView();
-    });
+    const btnScan = container.querySelector('#btn-scan-checkpoint-qr') as HTMLButtonElement | null;
+    const scanOverlay = container.querySelector('#checkpoint-scanner-overlay') as HTMLElement | null;
+    const btnCancelScan = container.querySelector('#btn-cancel-checkpoint-scan') as HTMLButtonElement | null;
+    const scanStatus = container.querySelector('#checkpoint-scan-status') as HTMLElement | null;
+    const btnSubmit = container.querySelector('#btn-submit-checkpoint') as HTMLButtonElement | null;
 
-    const btnVerify = container.querySelector('#btn-chk-verify') as HTMLButtonElement;
-    const inputId = container.querySelector('#chk-catch-id') as HTMLInputElement;
-    const selectStage = container.querySelector('#chk-stage-select') as HTMLSelectElement;
-    const inputTemp = container.querySelector('#chk-temp-input') as HTMLInputElement;
-    const btnMultisig = container.querySelector('#btn-chk-multisig') as HTMLButtonElement;
-    const btnSubmit = container.querySelector('#btn-chk-submit') as HTMLButtonElement;
-
-    btnVerify.onclick = () => {
-      const c = DB.catches.find(x => x.id === inputId.value.trim());
-      if (c) {
-        validatedCatch = c;
-        const statusBox = container.querySelector('#chk-verify-status');
-        if (statusBox) statusBox.innerHTML = `<div class="alert alert-green" style="font-size:12px; padding:6px 12px;">✓ Найдено судно: ${c.vessel}</div>`;
-        selectStage.disabled = false;
-        inputTemp.disabled = false;
-        btnMultisig.disabled = false;
-        updateInfoPanel(c);
-      } else {
-        validatedCatch = null;
-        const statusBox = container.querySelector('#chk-verify-status');
-        if (statusBox) statusBox.innerHTML = `<div class="alert alert-red" style="font-size:12px; padding:6px 12px;">ID не найден в OcuChain</div>`;
-        selectStage.disabled = true;
-        inputTemp.disabled = true;
-        btnMultisig.disabled = true;
-        btnSubmit.disabled = true;
-      }
-    };
-
-    btnMultisig.onclick = () => {
-      btnMultisig.textContent = '🔄 Bluetooth BLE рукопожатие с судно...';
-      btnMultisig.disabled = true;
-      setTimeout(() => {
-        btnMultisig.className = 'btn btn-outline btn-block';
-        btnMultisig.style.color = '#065F46';
-        btnMultisig.style.borderColor = 'var(--green)';
-        btnMultisig.textContent = '✓ Multi-Sig Подпись Рыбака подтверждена';
-        btnSubmit.disabled = false;
-      }, 1000);
-    };
-
-    container.querySelector('#checkpoint-stage-form')?.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      if (!validatedCatch) return;
-
-      const stage = selectStage.value as any;
-      const tempVal = parseFloat(inputTemp.value);
-      const inspectorName = user.name;
-
-      try {
-        const response = await fetch(`${API_BASE}/checkpoint`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ catch_id: validatedCatch.id, stage, temperature: tempVal, location: 'КПП', inspector_name: inspectorName })
-        });
-        if (response.ok) {
-          await DB.init();
-          container.querySelector('#chk-success-box')!.innerHTML = `<div class="alert alert-green">✓ Логистический этап успешно внесен. Данные синхронизированы.</div>`;
-          updateInfoPanel(validatedCatch);
-          btnSubmit.disabled = true;
-          btnMultisig.className = 'btn btn-cyan btn-block';
-          btnMultisig.textContent = '🤝 Сканировать QR-код рыбака для крипто-подписи';
-          btnMultisig.disabled = false;
-        }
-      } catch (e) {
-        const sc = validatedCatch.supply_chain;
-        const idx = sc.findIndex(s => s.stage === stage);
-        if (idx !== -1) {
-          sc[idx] = {
-            stage,
-            label: selectStage.options[selectStage.selectedIndex].text,
-            done: true,
-            time: new Date().toISOString(),
-            inspector: inspectorName,
-            temp: tempVal,
-            multisig: 'confirmed'
-          };
-          OcuChain.addEntry({ type: 'checkpoint', catch_id: validatedCatch.id, stage, inspector: inspectorName });
-          container.querySelector('#chk-success-box')!.innerHTML = `<div class="alert alert-green">✓ Логистический этап внесен оффлайн.</div>`;
-          updateInfoPanel(validatedCatch);
-          btnSubmit.disabled = true;
-          btnMultisig.className = 'btn btn-cyan btn-block';
-          btnMultisig.textContent = '🤝 Сканировать QR-код рыбака для крипто-подписи';
-          btnMultisig.disabled = false;
-        }
-      }
-    });
-  }
-
-  function updateInfoPanel(c: CatchRecord) {
-    const scHtml = c.supply_chain.map(s => `
-      <div style="font-size:12.5px; margin-bottom:8px; display:flex; justify-content:space-between;">
-        <span>${s.label}:</span>
-        <strong>${s.done ? 'Верифицирован' : 'Ожидание'}</strong>
-      </div>
-    `).join('');
-
-    const infoPanel = container.querySelector('#chk-info-panel');
-    if (infoPanel) {
-      infoPanel.innerHTML = `
-        <h4 style="font-size:14px; font-weight:800; color:var(--navy); margin-bottom:12px;">Статус прохождения цепи:</h4>
-        ${scHtml}
-        <div style="font-size:11px; color:var(--text-muted); border-top:1px dashed #E2E8F0; margin-top:12px; padding-top:12px;">
-          Вид: ${c.species}<br>Вес: ${c.weight_kg} кг
-        </div>
-      `;
+    if (btnScan && scanOverlay && scanStatus && btnSubmit) {
+      btnScan.onclick = () => {
+        scanOverlay.style.display = 'flex';
+        setTimeout(() => {
+          scanOverlay.style.display = 'none';
+          hasScannedQR = true;
+          scanStatus.textContent = '✓ QR Code scanned and verified successfully.';
+          scanStatus.style.color = '#10B981';
+          btnSubmit.disabled = false;
+        }, 1500);
+      };
     }
+
+    if (btnCancelScan && scanOverlay) {
+      btnCancelScan.onclick = () => {
+        scanOverlay.style.display = 'none';
+      };
+    }
+
+    const form = container.querySelector('#checkpoint-inspect-form') as HTMLFormElement | null;
+    form?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (!hasScannedQR) return;
+
+      const catchId = (container.querySelector('#checkpoint-id-select') as HTMLSelectElement).value;
+      const tempVal = parseFloat((container.querySelector('#checkpoint-temp-input') as HTMLInputElement).value);
+      const stageVal = parseInt((container.querySelector('#checkpoint-stage-select') as HTMLSelectElement).value);
+      const methodVal = (container.querySelector('#checkpoint-methodology') as HTMLSelectElement).value as any;
+
+      const stageName = stageVal === 2 ? "Port Bautino Checkpoint" : "Processing Guard Facility";
+      const location = stageVal === 2 ? "Bautino Harbor Inspector Office" : "Aktau Fish Processing Facility";
+      const checker = stageVal === 2 ? "Inspector A. Bekova" : "Officer D. Nurmagambetov";
+
+      const newStage: SupplyChainStage = {
+        stageId: stageVal,
+        name: stageName,
+        location: location,
+        checkedBy: checker,
+        timestamp: new Date().toISOString(),
+        verificationType: methodVal,
+        temp: tempVal
+      };
+
+      addStageToCatch(catchId, newStage);
+
+      // Force updating cold chain status if temperature is high
+      const catches = getCatches();
+      const match = catches.find(c => c.id === catchId);
+      if (match && tempVal > 4.0) {
+        match.coldChainStatus = "Violation";
+        localStorage.setItem('oc_catches', JSON.stringify(catches));
+      }
+
+      const feedback = container.querySelector('#checkpoint-feedback') as HTMLElement | null;
+      if (feedback) {
+        feedback.style.display = "block";
+        feedback.innerHTML = `
+          <div class="alert alert-green">
+            ✓ Checkpoint Stage ${stageVal} successfully logged in OcuChain ledger. Passport database updated.
+          </div>
+        `;
+      }
+
+      // Reset scan target
+      hasScannedQR = false;
+      if (scanStatus) {
+        scanStatus.textContent = '⚠️ Scanner verification required.';
+        scanStatus.style.color = '#EF4444';
+      }
+      if (btnSubmit) btnSubmit.disabled = true;
+    });
   }
 
-  renderView();
+  render();
   return container;
 }
 
+// ═══════════════════════════════════════════════
+// PAGE 4: SITUATION CENTER DASHBOARD
+// ═══════════════════════════════════════════════
 function AdminPage(): HTMLElement {
   const container = document.createElement('div');
   container.className = 'page-content container fade-in';
 
-  let mapInstance: any = null;
-  let activeTab = 'quotas';
-
   function renderView() {
-    const user = Session.getCurrentUser();
-
-    if (!user || user.role !== 'admin') {
-      renderLogin();
-      return;
+    const adminSession = Session.isAdminLoggedIn();
+    if (!adminSession) {
+      renderLoginCard();
+    } else {
+      renderDashboard();
     }
-
-    renderDashboard();
   }
 
-  function renderLogin() {
+  function renderLoginCard() {
     container.innerHTML = `
       <div class="login-screen">
-        <div class="login-card">
-          <h2 style="font-size: 20px; font-weight: 800; color: var(--navy); text-align: center; margin-bottom: 24px;">Акимат Ситуационный Центр</h2>
+        <div class="login-card" style="border-radius:16px;">
+          <h2 style="font-size:20px; font-weight:800; color:#1E3A8A; text-align:center; margin-bottom:24px;">Department Administration</h2>
           <div id="admin-login-err"></div>
           <form id="form-admin-login">
             <div class="form-group">
-              <label class="form-label">Суперадминистратор</label>
-              <input type="text" id="adm-u" class="form-input" value="admin" required>
+              <label class="form-label">Administrator Account</label>
+              <input type="text" id="admin-user" class="form-input" value="admin" required>
             </div>
-            <div class="form-group" style="margin-bottom: 24px;">
-              <label class="form-label">Пароль</label>
-              <input type="password" id="adm-p" class="form-input" value="admin" required>
+            <div class="form-group" style="margin-bottom:24px;">
+              <label class="form-label">Security Key</label>
+              <input type="password" id="admin-pass" class="form-input" value="admin" required>
             </div>
-            <button class="btn btn-primary btn-block">Авторизоваться</button>
+            <button class="btn btn-primary btn-block" style="background:#1E3A8A;">Unlock Situation Center</button>
           </form>
         </div>
       </div>
     `;
 
-    container.querySelector('#form-admin-login')?.addEventListener('submit', (e) => {
+    const form = container.querySelector('#form-admin-login');
+    form?.addEventListener('submit', (e) => {
       e.preventDefault();
-      const login = (container.querySelector('#adm-u') as HTMLInputElement).value;
-      const pass = (container.querySelector('#adm-p') as HTMLInputElement).value;
+      const login = (container.querySelector('#admin-user') as HTMLInputElement).value;
+      const pass = (container.querySelector('#admin-pass') as HTMLInputElement).value;
 
       if (login === 'admin' && pass === 'admin') {
-        Session.setCurrentUser({ id: 'admin', name: 'Акимат-Надзор', vessel: 'Situational Center', status: 'approved', greenScore: 100, role: 'admin' } as any);
+        Session.setAdminLoggedIn(true);
         renderView();
       } else {
         const err = container.querySelector('#admin-login-err');
-        if (err) err.innerHTML = `<div class="alert alert-red" style="margin-bottom: 12px;">Отказано в доступе</div>`;
+        if (err) err.innerHTML = `<div class="alert alert-red" style="margin-bottom:12px;">Access Denied.</div>`;
       }
     });
   }
 
   function renderDashboard() {
-    const currentQuotaUsed = { sturgeon: 1243, carp: 18764, roach: 31882 };
-    DB.catches.forEach(c => {
-      if (c.species_en === 'sturgeon') currentQuotaUsed.sturgeon += c.weight_kg;
-      if (c.species_en === 'carp') currentQuotaUsed.carp += c.weight_kg;
-      if (c.species_en === 'roach') currentQuotaUsed.roach += c.weight_kg;
-    });
+    const quotas = getQuotas();
+    const catches = getCatches();
 
-    const sturgeonPct = ((currentQuotaUsed.sturgeon / DB.quotas.sturgeon.allocated) * 100).toFixed(0);
-    const carpPct = ((currentQuotaUsed.carp / DB.quotas.carp.allocated) * 100).toFixed(0);
-    const roachPct = ((currentQuotaUsed.roach / DB.quotas.roach.allocated) * 100).toFixed(0);
+    // Render Progress Bars
+    const quotaCardsHtml = quotas.map(q => {
+      const percentage = Math.min(100, Math.round((q.consumed / q.totalAllocated) * 100));
+      return `
+        <div class="card" style="padding: 20px; border-radius: 16px;">
+          <div style="font-size: 11px; font-weight: 800; color:#94A3B8; text-transform:uppercase;">${q.species} Consumed Quota</div>
+          <div style="font-size: 24px; font-weight: 800; color:#1E3A8A; margin: 8px 0;">${q.consumed.toFixed(1)} / ${q.totalAllocated} kg</div>
+          <div class="progress-track" style="height: 8px; border-radius: 9999px; background: #F1F5F9; overflow: hidden;">
+            <div class="progress-fill" style="width: ${percentage}%; height: 100%; background: #06B6D4; border-radius: 9999px;"></div>
+          </div>
+          <div style="font-size: 11px; text-align: right; color:#64748B; margin-top: 4px;">${percentage}% consumed</div>
+        </div>
+      `;
+    }).join('');
+
+    // Filter Anomalous Catches: oilDetected === true OR status === "Suspicious"
+    const anomalousCatches = catches.filter(c => c.oilDetected === true || c.status === "Suspicious");
+
+    const tableRowsHtml = anomalousCatches.map(c => {
+      const factor = c.oilDetected ? "Oil Contamination" : "AntiGravity Biological Mismatch";
+      return `
+        <tr>
+          <td style="font-weight: 800;">${c.id}</td>
+          <td>${c.vessel}</td>
+          <td>[${c.location[0].toFixed(4)}, ${c.location[1].toFixed(4)}]</td>
+          <td style="color: #EF4444; font-weight: 700;">${factor}</td>
+          <td>
+            ${c.status === 'Verified' 
+              ? `<span class="badge badge-green">Resolved</span>` 
+              : `<button class="btn btn-cyan btn-sm btn-legalize-quota" data-id="${c.id}" data-weight="${c.weight}" data-species="${c.species}" style="background:#06B6D4; color:white; font-size:11px; padding:6px 12px;">Legalize Catch via Smart Lease</button>`
+            }
+          </td>
+        </tr>
+      `;
+    }).join('');
 
     container.innerHTML = `
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:32px;">
         <div>
-          <h2>Ситуационный дашборд Акимата</h2>
-          <p style="color:var(--text-secondary); font-size:13.5px;">Экологический радарный мониторинг и квоты</p>
+          <h2 style="font-size: 22px; font-weight: 800; color: #1E3A8A;">Situation Center Dashboard</h2>
+          <p style="color: #475569; font-size: 13.5px;">Mangystau Region Fish Resources Department - Executive Analytics</p>
         </div>
-        <button id="btn-admin-logout" class="btn btn-outline btn-sm">Выйти</button>
+        <button id="btn-admin-logout" class="btn btn-outline btn-sm">Exit Dashboard</button>
       </div>
 
-      <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:20px; margin-bottom:32px;" class="passport-grid">
-        <div class="card" style="padding:16px; border-radius:16px;">
-          <div style="font-size:12px; color:var(--text-muted);">ОСВОЕНИЕ КВОТЫ: ОСЁТР</div>
-          <div style="font-size:24px; font-weight:800; color:var(--red); margin:6px 0;">${sturgeonPct}%</div>
-          <div class="progress-track"><div class="progress-fill progress-red" style="width:${sturgeonPct}%"></div></div>
-        </div>
-        <div class="card" style="padding:16px; border-radius:16px;">
-          <div style="font-size:12px; color:var(--text-muted);">ОСВОЕНИЕ КВОТЫ: САЗАН</div>
-          <div style="font-size:24px; font-weight:800; color:var(--navy); margin:6px 0;">${carpPct}%</div>
-          <div class="progress-track"><div class="progress-fill progress-navy" style="width:${carpPct}%"></div></div>
-        </div>
-        <div class="card" style="padding:16px; border-radius:16px;">
-          <div style="font-size:12px; color:var(--text-muted);">ОСВОЕНИЕ КВОТЫ: ВОБЛА</div>
-          <div style="font-size:24px; font-weight:800; color:var(--cyan-dark); margin:6px 0;">${roachPct}%</div>
-          <div class="progress-track"><div class="progress-fill progress-cyan" style="width:${roachPct}%"></div></div>
-        </div>
+      <!-- Quota Metrics Grid -->
+      <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-bottom: 32px;" class="passport-grid">
+        ${quotaCardsHtml}
       </div>
 
-      <div style="display:grid; grid-template-columns:1.5fr 1fr; gap:32px;" class="passport-grid">
+      <div style="display: grid; grid-template-columns: 1.6fr 1fr; gap: 32px;" class="passport-grid">
+        <!-- Anthropogenic Factors Table -->
+        <div class="card" style="padding: 24px; border-radius: 16px;">
+          <h3 style="font-size:15px; font-weight:800; color:#1E3A8A; margin-bottom:16px; text-transform:uppercase;">Anthropogenic Anomaly & Biological Audit Log</h3>
+          <div style="overflow-x: auto;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Catch ID</th>
+                  <th>Vessel</th>
+                  <th>Coordinates</th>
+                  <th>Flagged Anomaly</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${tableRowsHtml.length > 0 ? tableRowsHtml : `<tr><td colspan="5" style="text-align:center; color:#94A3B8; padding: 20px;">No active biological anomalies recorded on ledger.</td></tr>`}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Satellite Eco Heatmap -->
         <div class="card" style="border-radius:16px;">
-          <div class="card-header"><div class="card-title">Caspian Environmental Heatmap</div></div>
+          <div class="card-header">
+            <div class="card-title">Regional Radar Eco-Heatmap</div>
+            <div class="card-subtitle">Active environmental indicators - Caspian Sea</div>
+          </div>
           <div class="card-body" style="padding:0;">
             <div id="admin-map" style="height:350px; width:100%;"></div>
-          </div>
-        </div>
-
-        <div class="card" style="padding:24px; border-radius:16px; display:flex; flex-direction:column; gap:16px;">
-          <div class="tabs">
-            <button class="tab-btn ${activeTab === 'quotas' ? 'active' : ''}" data-tab="quotas">Статистика</button>
-            <button class="tab-btn ${activeTab === 'anomalies' ? 'active' : ''}" data-tab="anomalies">Лог аномалий</button>
-          </div>
-
-          <div class="tab-panel ${activeTab === 'quotas' ? 'active' : ''}">
-            <p style="font-size:13px; color:var(--text-secondary); margin-bottom:12px;">Мониторинг расхода государственных лимитов.</p>
-            <div style="font-size:12.5px; line-height:1.8;">
-              Осетр: <strong>${currentQuotaUsed.sturgeon.toFixed(1)} / 5000 кг</strong><br>
-              Сазан: <strong>${currentQuotaUsed.carp.toFixed(1)} / 45000 кг</strong><br>
-              Вобла: <strong>${currentQuotaUsed.roach.toFixed(1)} / 80000 кг</strong>
-            </div>
-          </div>
-
-          <div class="tab-panel ${activeTab === 'anomalies' ? 'active' : ''}" style="max-height:280px; overflow-y:auto; display:flex; flex-direction:column; gap:10px;">
-            ${DB.antifrodLog.map(log => {
-              const isPending = log.status === 'pending_review' || log.status === 'blocked';
-              return `
-                <div style="border:1.5px solid ${isPending ? 'var(--red)' : '#E2E8F0'}; border-radius:12px; padding:12px; background:${isPending ? 'var(--red-light)' : '#F8FAFC'};">
-                  <div style="display:flex; justify-content:space-between; font-size:11px;">
-                    <strong>ID: ${log.id}</strong>
-                    <span class="badge ${isPending ? 'badge-red' : 'badge-green'}">${log.status}</span>
-                  </div>
-                  <p style="font-size:12px; margin:6px 0;">
-                    Судно: <strong>${log.vessel}</strong> | Вобла: <strong>${log.weight} кг</strong>
-                  </p>
-                  ${isPending ? `
-                    <button class="btn btn-cyan btn-sm btn-action-approve-quota" data-id="${log.id}" style="width:100%; font-size:11px; padding:4px 8px;">
-                      Легализовать прилов через OcuQuota Share
-                    </button>
-                  ` : ''}
-                </div>
-              `;
-            }).join('')}
-            ${DB.antifrodLog.length === 0 ? '<p style="color:var(--text-muted); text-align:center;">Аномалий нет.</p>' : ''}
           </div>
         </div>
       </div>
     `;
 
-    container.querySelector('#btn-admin-logout')?.addEventListener('click', () => {
-      Session.logout();
-      renderView();
-    });
+    const btnLogout = container.querySelector('#btn-admin-logout') as HTMLButtonElement | null;
+    if (btnLogout) {
+      btnLogout.onclick = () => {
+        Session.logout();
+        renderView();
+      };
+    }
 
-    container.querySelectorAll('.tab-btn').forEach(btnEl => {
+    container.querySelectorAll('.btn-legalize-quota').forEach(btnEl => {
       const btn = btnEl as HTMLButtonElement;
       btn.onclick = () => {
-        activeTab = btn.getAttribute('data-tab')!;
-        renderDashboard();
-      };
-    });
+        const id = btn.getAttribute('data-id')!;
+        const weight = parseFloat(btn.getAttribute('data-weight')!);
+        const species = btn.getAttribute('data-species')! as FishSpecies;
 
-    container.querySelectorAll('.btn-action-approve-quota').forEach(btnEl => {
-      const btn = btnEl as HTMLButtonElement;
-      btn.onclick = async () => {
-        const id = btn.getAttribute('data-id');
-        const log = DB.antifrodLog.find(x => x.id === id);
-        if (log) {
-          try {
-            await leaseQuota(log.vessel, 'roach', log.weight);
-            log.status = 'approved_manually';
-            
-            await fetch(`${API_BASE}/antifrod`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                id: log.id,
-                vessel: log.vessel,
-                species: log.species,
-                weight: log.weight,
-                reason: log.description,
-                status: 'approved_manually',
-                sent_to_moderator: true
-              })
-            });
-
-            await DB.init();
-            alert(`Прилов судна ${log.vessel} успешно легализован с использованием OcuQuota Share!`);
-            renderDashboard();
-          } catch (e) {
-            console.error(e);
-          }
+        // Perform smart lease backend operation
+        const result = OcuQuotaShare(weight, species);
+        if (result.leased) {
+          updateCatchStatus(id, result.newStatus);
+          alert(`Smart lease approved. Unused quota leased from Caspian vessel ${result.partnerVessel}. Anomalous transaction approved.`);
+          renderDashboard();
         }
       };
     });
 
-    initMap();
+    initAdminMap();
   }
 
-  function initMap() {
+  function initAdminMap() {
     setTimeout(() => {
-      const mapDiv = container.querySelector('#admin-map');
-      if (!mapDiv) return;
-      if (mapInstance) mapInstance.remove();
-
-      mapInstance = L.map(mapDiv).setView([43.85, 51.0], 8);
-      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-        attribution: 'Esri Satellite'
-      }).addTo(mapInstance);
-
-      DB.ecoMarkers.forEach(m => {
-        if (m.type === 'oil') {
-          const redIcon = L.divIcon({
-            className: 'pulse-red-marker',
-            html: '<div style="width: 14px; height: 14px; background-color: #EF4444; border: 2px solid white; border-radius: 50%;"></div>',
-            iconSize: [14, 14],
-            iconAnchor: [7, 7]
-          });
-          L.marker([m.lat, m.lng], { icon: redIcon }).addTo(mapInstance)
-            .bindPopup(`<strong>🚨 Разлив нефти</strong>`);
-        } else if (m.type === 'seal') {
-          const sealIcon = L.divIcon({
-            html: '<div style="width:14px; height:14px; background-color:#06B6D4; border:2px solid white; border-radius:50%; box-shadow:0 0 8px #06B6D4;"></div>',
-            iconSize: [14, 14],
-            iconAnchor: [7, 7]
-          });
-          L.marker([m.lat, m.lng], { icon: sealIcon }).addTo(mapInstance)
-            .bindPopup(`<strong>🐬 Каспийский тюлень #37</strong>`);
-        } else {
-          L.marker([m.lat, m.lng]).addTo(mapInstance)
-            .bindPopup(`<strong>Улов: ${m.label}</strong>`);
+      if (globalAdminMap) {
+        try {
+          globalAdminMap.remove();
+        } catch (e) {
+          console.warn("Failed to remove Leaflet map instance:", e);
         }
-      });
-    }, 150);
+        globalAdminMap = null;
+      }
+
+      const mapDiv = document.getElementById("admin-map");
+      if (!mapDiv) return;
+      mapDiv.innerHTML = '';
+
+      try {
+        globalAdminMap = L.map("admin-map").setView([43.85, 51.0], 8);
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+          attribution: 'Esri Satellite'
+        }).addTo(globalAdminMap);
+
+        // Render markers for anomalies
+        const catches = getCatches();
+        catches.forEach(c => {
+          if (c.oilDetected || c.status === "Suspicious") {
+            const color = c.oilDetected ? "#EF4444" : "#F59E0B";
+            const anomalyLabel = c.oilDetected ? "Oil Spill Contamination" : "AntiGravity Anomaly";
+
+            const customIcon = L.divIcon({
+              html: `<div style="width: 14px; height: 14px; background-color: ${color}; border: 2px solid white; border-radius: 50%; box-shadow: 0 0 8px ${color};"></div>`,
+              iconSize: [14, 14],
+              iconAnchor: [7, 7]
+            });
+
+            L.marker(c.location, { icon: customIcon }).addTo(globalAdminMap)
+              .bindPopup(`<strong>Anomaly Flagged</strong><br>${anomalyLabel}<br>ID: ${c.id}`);
+          }
+        });
+      } catch (err) {
+        console.error("Leaflet admin map error:", err);
+      }
+    }, 100);
   }
 
   renderView();
   return container;
 }
 
+// ═══════════════════════════════════════════════
+// PAGE 5: CYBER TECHNICAL SUPERVISION
+// ═══════════════════════════════════════════════
 function IdxControlPage(): HTMLElement {
   const container = document.createElement('div');
   container.className = 'page-content container fade-in';
 
   function render() {
-    const chainStatus = OcuChain.verify();
+    const catches = getCatches();
+    const integrity = verifyBlockchainIntegrity();
 
     container.innerHTML = `
       <style>
@@ -1198,25 +1330,27 @@ function IdxControlPage(): HTMLElement {
         }
         .cyber-alert-red {
           background: rgba(239, 68, 68, 0.05) !important;
-          border: 1px solid var(--red) !important;
+          border: 1px solid #EF4444 !important;
           color: #FECACA !important;
           border-radius: 12px;
         }
       </style>
 
       <div style="background:#020617; padding:32px; border-radius:24px; border:1px solid #1E293B; color:#F8FAFC;">
-        <h2 class="cyber-text-cyan" style="font-family:'Courier New', monospace; font-size:24px; margin-bottom:24px;">📡 КИБЕР-ЦЕНТР ТЕХНОЛОГИЧЕСКОГО НАДЗОРА И АНТИФРОДА</h2>
+        <h2 class="cyber-text-cyan" style="font-family:'Courier New', monospace; font-size:22px; margin-bottom:24px; text-transform:uppercase;">📡 Cyber Technical Supervision & Ledger Audit Console</h2>
         
         <div style="display:grid; grid-template-columns:1.5fr 1fr; gap:32px;" class="passport-grid">
+          
           <div class="card cyber-card" style="padding:24px;">
-            <div style="font-weight:700; margin-bottom:12px; font-family:'Courier New', monospace;">AI Cross-Check Anomaly Detector</div>
+            <div style="font-weight:700; margin-bottom:12px; font-family:'Courier New', monospace;">Autonomous Ledger Inspection Terminal</div>
             <div class="terminal" style="background:#030712; max-height:260px; overflow-y:auto; padding:12px; border-radius:8px;">
-              <div class="terminal-line"><span class="ts">[13:48:02]</span> <span class="info">[INFO]</span> OcuChain Ledger. Блоков: ${DB.catches.length}</div>
-              ${DB.antifrodLog.map(x => `
+              <div class="terminal-line"><span class="ts">[16:59:56]</span> <span class="info">[INFO]</span> Initializing ledger integrity verification parameters...</div>
+              <div class="terminal-line"><span class="ts">[16:59:57]</span> <span class="info">[INFO]</span> Scanning total blockchain blocks: ${catches.length} entries.</div>
+              ${catches.map(c => `
                 <div class="terminal-line">
-                  <span class="ts">[${new Date(x.timestamp).toLocaleTimeString()}]</span>
-                  <span class="err">[ANOMALY]</span>
-                  <span class="msg">Судно ${x.vessel}: Вобла ${x.weight} кг отклонена. Биологический максимум превышен.</span>
+                  <span class="ts">[${new Date(c.timestamp).toLocaleTimeString()}]</span>
+                  <span class="${c.status === 'Blocked' ? 'err' : c.status === 'Suspicious' ? 'warn' : 'ok'}">${c.status === 'Verified' ? '[OK]' : '[WARNING]'}</span>
+                  <span class="msg">Batch ${c.id}: Hash check ${c.hash.substring(0, 16)}...</span>
                 </div>
               `).join('')}
             </div>
@@ -1224,38 +1358,52 @@ function IdxControlPage(): HTMLElement {
 
           <div class="card cyber-card" style="padding:24px; display:flex; flex-direction:column; gap:20px;">
             <div>
-              <div style="font-weight:700; font-family:'Courier New', monospace; margin-bottom:12px;">LocalStorage Integrity</div>
-              ${chainStatus.valid 
-                ? `<div class="alert alert-green" style="background:rgba(16,185,129,0.05); border:1px solid var(--green); color:#D1FAE5; padding:12px; border-radius:12px;">
-                    ✓ Блокчейн цел. Все хэши OcuChain Ledger валидны.
+              <div style="font-weight:700; font-family:'Courier New', monospace; margin-bottom:12px;">Local Database Status</div>
+              ${integrity.valid 
+                ? `<div class="alert alert-green" style="background:rgba(16,185,129,0.05); border:1px solid #10B981; color:#D1FAE5; padding:12px; border-radius:12px;">
+                    ✓ Cryptographic chain integral. All blocks verify correctly.
                    </div>`
                 : `<div class="alert cyber-alert-red" style="padding:12px;">
-                    🚨 <strong>ОБНАРУЖЕН ВЗЛОМ ДАННЫХ!</strong><br>
-                    Разрыв хэш-цепочки на блоке #${chainStatus.brokenAt}. Замок OcuLock активирован.
+                    🚨 <strong>OCUCHAIN SIGNATURE BREACH!</strong><br>
+                    Data mismatch at node block #${integrity.brokenAtIdx}. OcuLock profile freeze activated.
                    </div>`
               }
             </div>
 
-            <button id="btn-hack-simulate" class="btn btn-danger btn-block btn-sm" style="font-family:'Courier New', monospace;">
-              Симулировать ручной взлом JSON рыбаком
+            <button id="btn-malicious-tamper" class="btn btn-danger btn-block btn-sm" style="font-family:'Courier New', monospace; background:#EF4444;">
+              Simulate Malicious JSON Modification in LocalStorage
             </button>
           </div>
+
         </div>
       </div>
     `;
 
-    container.querySelector('#btn-hack-simulate')?.addEventListener('click', () => {
-      breakBlockchainIntegrity();
-      alert('Хэш-цепочка повреждена. Лицензия fisher1 заблокирована OcuLock. Перезапуск...');
-      render();
-    });
+    const btnTamper = container.querySelector('#btn-malicious-tamper') as HTMLButtonElement | null;
+    if (btnTamper) {
+      btnTamper.onclick = () => {
+        const records = getCatches();
+        if (records.length > 0) {
+          records[records.length - 1].hash = "sha256:TAMPERED_MALICIOUS_HASH_REPLACE";
+          localStorage.setItem('oc_catches', JSON.stringify(records));
+        } else {
+          // Empty seed hack
+          localStorage.setItem('oc_catches', '[]');
+        }
+        OcuLock();
+        Router.render(Router.currentPath);
+      };
+    }
   }
 
   render();
   return container;
 }
 
-document.addEventListener('DOMContentLoaded', async () => {
+// ═══════════════════════════════════════════════
+// APPLICATION APP BOOTSTRAP
+// ═══════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
   const appRoot = document.getElementById('app-root');
   if (!appRoot) return;
 
@@ -1265,25 +1413,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     <div class="header-inner">
       <a href="/passport" data-route="/passport" class="header-logo">
         <svg width="24" height="24" viewBox="0 0 48 48" fill="none">
-          <circle cx="24" cy="24" r="22" stroke="var(--navy)" stroke-width="2.5" stroke-dasharray="6 4" />
-          <path d="M8 24 C14 16, 22 18, 24 24 C26 30, 34 32, 40 24" stroke="var(--navy)" stroke-width="3" fill="none"/>
+          <circle cx="24" cy="24" r="22" stroke="#1E3A8A" stroke-width="3" stroke-dasharray="6 4" />
+          <path d="M8 24 C14 16, 22 18, 24 24 C26 30, 34 32, 40 24" stroke="#06B6D4" stroke-width="4" fill="none"/>
         </svg>
-        <span>OcuCast</span>
-        <span class="logo-tag">Mangistau</span>
+        <span style="font-weight: 800; color: #1E3A8A; margin-left: 8px;">OcuCast</span>
+        <span class="logo-tag" style="background:#06B6D4; color:white; font-size:9px; font-weight:800; padding:2px 6px; border-radius:9999px; margin-left:6px;">Mangystau</span>
       </a>
 
       <nav class="header-nav" id="main-nav-links">
-        <a href="/passport" data-route="/passport">Публичный паспорт</a>
-        <a href="/fisherman" data-route="/fisherman">Кабинет рыбака</a>
-        <a href="/checkpoint" data-route="/checkpoint">Чекпоинт КПП</a>
-        <a href="/admin" data-route="/admin">Ситуационный центр</a>
-        <a href="/idx-control" data-route="/idx-control">Технадзор</a>
+        <a href="/passport" data-route="/passport">Digital Passport</a>
+        <a href="/fisherman" data-route="/fisherman">Fisherman Terminal</a>
+        <a href="/checkpoint" data-route="/checkpoint">Logistics Checkpoint</a>
+        <a href="/admin" data-route="/admin">Situation Center</a>
+        <a href="/idx-control" data-route="/idx-control">Technical Supervision</a>
       </nav>
 
       <div class="header-actions">
         <div class="header-status">
-          <span class="status-dot"></span>
-          <span>OcuChain Live</span>
+          <span class="status-dot" style="width:6px; height:6px; border-radius:50%; background:#06B6D4; display:inline-block; margin-right:6px;"></span>
+          <span style="font-size:12px; font-weight:800; color:#1E3A8A;">OcuChain Active</span>
         </div>
       </div>
     </div>
@@ -1294,54 +1442,34 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const footer = document.createElement('footer');
   footer.id = 'site-footer';
-  
-  function updateFooterHash() {
-    const chain = OcuChain.getChain();
-    const lastHash = chain.length ? chain[chain.length - 1].hash : '0000000000000000';
-    
-    footer.innerHTML = `
-      <div class="container">
-        <div class="footer-inner">
-          <div class="footer-brand">
-            <div class="logo-white">OcuCast</div>
-            <p>Физико-цифровая инфраструктура доверенной фиксации вылова рыбы.</p>
-          </div>
-          <div class="footer-cert">
-            <div class="cert-badge">🛡️ Департамент Минсельхоза РК</div>
-          </div>
+  footer.innerHTML = `
+    <div class="container">
+      <div class="footer-inner" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px;">
+        <div class="footer-brand">
+          <div style="font-weight: 800; color: #1E3A8A;">OcuCast Platform</div>
+          <p style="font-size:12px; color:#64748B;">Department of Fish Resources, Mangystau Region.</p>
         </div>
-        <div class="footer-bottom">
-          <div class="chain-hash">Chain Hash: ${lastHash}</div>
+        <div class="footer-cert">
+          <div class="cert-badge" style="background:#E2E8F0; padding:6px 12px; border-radius:9999px; font-size:11px; font-weight:800; color:#475569;">
+            🛡️ Official Mangystau Registry Seal
+          </div>
         </div>
       </div>
-    `;
-  }
-  updateFooterHash();
+    </div>
+  `;
 
   appRoot.innerHTML = '';
   appRoot.appendChild(header);
   appRoot.appendChild(pageContainer);
   appRoot.appendChild(footer);
 
+  // Register routes
   Router.register('/passport', PassportPage);
   Router.register('/fisherman', FishermanPage);
   Router.register('/checkpoint', CheckpointPage);
   Router.register('/admin', AdminPage);
   Router.register('/idx-control', IdxControlPage);
 
-  const originalNavigate = Router.navigate;
-  Router.navigate = function(path: string, pushState?: boolean) {
-    originalNavigate.call(Router, path, pushState);
-    updateFooterHash();
-  };
-
-  const originalRender = Router.render;
-  Router.render = function(path: string) {
-    originalRender.call(Router, path);
-    updateFooterHash();
-  };
-
-  await DB.init();
   Router.init();
 
   const loader = document.getElementById('loading-screen');

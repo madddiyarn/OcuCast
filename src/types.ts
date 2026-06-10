@@ -1,75 +1,35 @@
-export interface Fisherman {
-  id: string;
+export type FishSpecies = "Sturgeon" | "Carp" | "Vobla";
+
+export interface SupplyChainStage {
+  stageId: number;
   name: string;
-  vessel: string;
-  status: 'approved' | 'pending' | 'suspended';
-  greenScore: number;
-  login?: string;
-  password?: string;
-  role?: string;
-}
-
-export interface SupplyChainStep {
-  stage: 'sea' | 'port' | 'factory' | 'retail';
-  label: string;
-  done: boolean;
-  time: string | null;
-  inspector: string | null;
-  temp: number | null;
-  multisig: 'auto' | 'confirmed' | 'manual' | null;
-}
-
-export interface CatchRecord {
-  id: string;
-  species: string;
-  weight: number;
+  location: string;
+  checkedBy: string;
   timestamp: string;
-  locationName: string;
-  coordinates: [number, number];
-  freshnessIndex: number;
-  oilDetected: boolean;
-  hash: string;
-  fisherman_id: string;
+  verificationType: "QR_Verification_Scan" | "MultiSig_Bluetooth" | "Digital_Stamp_Approval";
+  temp?: number | null;
+}
+
+export interface CatchTransaction {
+  id: string;
+  weight: number;
+  species: FishSpecies;
   vessel: string;
-  species_en: string;
-  weight_kg: number;
-  verified: boolean;
-  hardware_verified: boolean;
-  gps_lat: number;
-  gps_lng: number;
-  gps_label: string;
-  freshness_index: number;
-  oil_detected: boolean;
-  price_per_kg: number;
-  quota_share_used: boolean;
-  quota_share_partner_vessel: string | null;
-  quota_share_partner_name: string | null;
-  supply_chain: SupplyChainStep[];
+  timestamp: string;
+  location: [number, number];
+  status: "Pending" | "Verified" | "Suspicious" | "Blocked";
+  imageBase64: string;
+  aiConfidence: number;
+  oilDetected: boolean;
+  coldChainStatus: "Normal" | "Violation";
+  currentStage: number;
+  gyroAngle: number;
+  stages: SupplyChainStage[];
+  hash: string;
 }
 
 export interface QuotaLimit {
-  species: string;
-  allocated: number;
-  used: number;
-  unit?: string;
-  icon?: string;
-  label?: string;
-}
-
-export interface AnomalyLog {
-  id: string;
-  timestamp: string;
-  vessel: string;
-  species: string;
-  weight: number;
-  description: string;
-  resolved: boolean;
-  status?: 'blocked' | 'pending_review' | 'approved_manually' | 'rejected';
-  sent_to_moderator?: boolean;
-}
-
-export interface SpeciesLimit {
-  max_weight_kg: number;
-  typical_weight: string;
-  name_ru: string;
+  species: FishSpecies;
+  totalAllocated: number;
+  consumed: number;
 }
