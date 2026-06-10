@@ -1532,7 +1532,7 @@ function AdminPage(): HTMLElement {
     }
 
     auditContainer.innerHTML = `
-      <div class="card" style="padding: 24px; border-radius: 16px; border: 1.5px solid #06B6D4; background: #FAFDFE; margin-top: 8px;">
+      <div class="card slide-up" style="padding: 24px; border-radius: 16px; border: 1.5px solid #06B6D4; background: #FAFDFE; margin-top: 8px;">
         <h3 style="font-size: 15px; font-weight: 800; color: #1E3A8A; margin-bottom: 8px;">Спутниковая проверка и АИС (Автоматический анализ ИИ)</h3>
         <p style="font-size: 12.5px; color: #475569; margin-bottom: 16px;">
           Inspecting target batch <strong>${c.id}</strong> from vessel <strong>${c.vessel}</strong>. Coordinates: [${c.location[0].toFixed(4)}, ${c.location[1].toFixed(4)}].
