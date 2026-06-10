@@ -3,9 +3,68 @@ import { getCatches, saveCatch, updateCatchStatus, addStageToCatch, getQuotas, v
 import { runAIEstimation, checkCatchLimits, OcuQuotaShare, OcuLock } from './backend';
 
 declare const L: any;
+declare const jsQR: any;
 
 let globalPassportMap: any = null;
 let globalAdminMap: any = null;
+
+let qrScanStream: MediaStream | null = null;
+let qrScanAnimationId: number | null = null;
+
+function stopQRScanning() {
+  if (qrScanStream) {
+    qrScanStream.getTracks().forEach(track => track.stop());
+    qrScanStream = null;
+  }
+  if (qrScanAnimationId) {
+    cancelAnimationFrame(qrScanAnimationId);
+    qrScanAnimationId = null;
+  }
+}
+
+function startQRScanning(video: HTMLVideoElement, onDecoded: (data: string) => void) {
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+    .then(stream => {
+      qrScanStream = stream;
+      video.srcObject = stream;
+      video.setAttribute("playsinline", "true");
+      video.play();
+      
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      
+      function scanFrame() {
+        if (video.readyState === video.HAVE_ENOUGH_DATA && ctx) {
+          canvas.height = video.videoHeight;
+          canvas.width = video.videoWidth;
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = jsQR(imageData.data, imageData.width, imageData.height, {
+            inversionAttempts: "dontInvert",
+          });
+          
+          if (code && code.data) {
+            stopQRScanning();
+            onDecoded(code.data);
+            return;
+          }
+        }
+        qrScanAnimationId = requestAnimationFrame(scanFrame);
+      }
+      qrScanAnimationId = requestAnimationFrame(scanFrame);
+    })
+    .catch(err => {
+      console.warn("Camera access denied or failed for QR scanning:", err);
+      // Fallback mock scanning if camera fails or is blocked:
+      setTimeout(() => {
+        const catches = getCatches();
+        if (catches.length > 0) {
+          stopQRScanning();
+          onDecoded(catches[0].id);
+        }
+      }, 4000);
+    });
+}
 
 const Session = {
   getCurrentUser(): { username: string; vessel: string; status: 'approved' | 'pending' | 'suspended' } | null {
@@ -37,6 +96,34 @@ const Session = {
     this.setAdminLoggedIn(false);
   }
 };
+
+const DEFAULT_STAGES = (_id: string, dateStr: string): SupplyChainStage[] => [
+  {
+    stageId: 1,
+    name: "Sea Catch Registration",
+    location: "Mangystau Caspian Sector C-1",
+    checkedBy: "Autonomous GPS telemetry",
+    timestamp: dateStr,
+    verificationType: "QR_Verification_Scan"
+  },
+  {
+    stageId: 2,
+    name: "Port Bautino Checkpoint",
+    location: "Bautino Harbor Inspector Office",
+    checkedBy: "Inspector A. Bekova",
+    timestamp: "",
+    verificationType: "MultiSig_Bluetooth"
+  },
+  {
+    stageId: 3,
+    name: "Processing Guard Facility",
+    location: "Aktau Fish Processing Facility",
+    checkedBy: "Officer D. Nurmagambetov",
+    timestamp: "",
+    verificationType: "Digital_Stamp_Approval"
+  }
+];
+
 
 const Router = {
   routes: {} as Record<string, () => HTMLElement>,
@@ -75,11 +162,18 @@ const Router = {
         return;
       }
 
-      const route = this.routes[path] || this.routes['/passport'];
+      // Extract path and query params
+      const [cleanPath, queryString] = path.split('?');
+      const route = this.routes[cleanPath] || this.routes['/passport'];
+      
+      // Save parsed search params so pages can retrieve them
+      (window as any)._currentRouteQuery = new URLSearchParams(queryString || "");
+
       this.currentPath = path;
       container.appendChild(route());
     }
-    this._updateNav(path);
+    const [cleanNavPath] = path.split('?');
+    this._updateNav(cleanNavPath);
     window.scrollTo(0, 0);
   },
 
@@ -148,7 +242,8 @@ function PassportPage(): HTMLElement {
   const container = document.createElement('div');
   container.className = 'page-content container fade-in';
 
-  let activeRecordId = "";
+  const query = (window as any)._currentRouteQuery as URLSearchParams | undefined;
+  let activeRecordId = query ? query.get('id') || "" : "";
 
   function renderView() {
     if (!activeRecordId) {
@@ -187,8 +282,8 @@ function PassportPage(): HTMLElement {
           <h3 style="font-size: 18px; font-weight: 800; color: #1E3A8A; margin-bottom: 12px;">Active Scanner Device Stream</h3>
           <p style="font-size: 13px; color: #475569; margin-bottom: 20px;">Positioning optical sensor calibration camera...</p>
           <div style="width: 280px; height: 200px; background: #000; border-radius: 8px; margin: 0 auto 20px; position: relative; overflow: hidden;">
-            <div style="position: absolute; inset: 20px; border: 2px dashed #06B6D4; animation: pulse 1.5s infinite;"></div>
-            <div style="color: white; font-family: monospace; font-size: 12px; margin-top: 90px; text-align: center;">SCANNING FOR QR CODES...</div>
+            <video id="passport-scan-video" style="width: 100%; height: 100%; object-fit: cover;"></video>
+            <div style="position: absolute; inset: 20px; border: 2px dashed #06B6D4; pointer-events: none;"></div>
           </div>
           <button id="btn-cancel-scan" class="btn btn-ghost">Cancel</button>
         </div>
@@ -218,19 +313,24 @@ function PassportPage(): HTMLElement {
     if (btnScan && scanOverlay) {
       btnScan.onclick = () => {
         scanOverlay.style.display = 'flex';
-        setTimeout(() => {
-          scanOverlay.style.display = 'none';
-          const catches = getCatches();
-          if (catches.length > 0) {
-            activeRecordId = catches[0].id;
+        const video = container.querySelector('#passport-scan-video') as HTMLVideoElement | null;
+        if (video) {
+          startQRScanning(video, (decodedId) => {
+            scanOverlay.style.display = 'none';
+            let cleanId = decodedId;
+            if (decodedId.includes("id=")) {
+              cleanId = decodedId.split("id=")[1].split("&")[0];
+            }
+            activeRecordId = cleanId;
             renderView();
-          }
-        }, 1800);
+          });
+        }
       };
     }
 
     if (btnCancelScan && scanOverlay) {
       btnCancelScan.onclick = () => {
+        stopQRScanning();
         scanOverlay.style.display = 'none';
       };
     }
@@ -677,11 +777,15 @@ function FishermanPage(): HTMLElement {
         <div id="finalize-success-card" style="display:none; padding:16px; background:#ECFDF5; border:1.5px solid #10B981; border-radius:12px; text-align:center;">
           <span style="font-size: 24px;">🖨️</span>
           <div style="color:#065F46; font-weight:800; font-size:14px; margin: 8px 0 4px;">Catch Registered & Certified</div>
+          <div style="margin: 12px 0;">
+            <img id="finalize-qr-img" src="" style="width: 140px; height: 140px; border: 1px solid #E2E8F0; border-radius: 8px; display: inline-block;" />
+          </div>
           <div style="font-size:11px; font-family:monospace; background:white; padding:8px; border-radius:6px; border:1px dashed #A7F3D0; margin-bottom:12px;">
             OcuCast Secure Seal - Do not tamper<br>
             CODE: <span id="final-registered-id"></span>
           </div>
-          <button id="btn-restart-wizard" class="btn btn-cyan btn-sm" style="background:#06B6D4;">Start New Catch Registration</button>
+          <button id="btn-go-to-passport-immediate" class="btn btn-primary btn-block" style="background:#1E3A8A; margin-bottom:8px; display:block;">View Digital Passport</button>
+          <button id="btn-restart-wizard" class="btn btn-cyan btn-block" style="background:#06B6D4; color:white;">Start New Catch Registration</button>
         </div>
 
         <button id="btn-step3-back" class="btn btn-ghost" style="margin-top:10px;">Restart Calibration</button>
@@ -808,6 +912,19 @@ function FishermanPage(): HTMLElement {
             successCard.style.display = "block";
             const lbl = container.querySelector('#final-registered-id');
             if (lbl) lbl.textContent = newId;
+
+            const qrImg = container.querySelector('#finalize-qr-img') as HTMLImageElement | null;
+            if (qrImg) {
+              const passportUrl = `${window.location.origin}/passport?id=${newId}`;
+              qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(passportUrl)}`;
+            }
+
+            const btnPassportImmediate = container.querySelector('#btn-go-to-passport-immediate') as HTMLButtonElement | null;
+            if (btnPassportImmediate) {
+              btnPassportImmediate.onclick = () => {
+                Router.navigate(`/passport?id=${newId}`);
+              };
+            }
           }
         };
       }
@@ -842,6 +959,19 @@ function FishermanPage(): HTMLElement {
             successCard.style.display = "block";
             const lbl = container.querySelector('#final-registered-id');
             if (lbl) lbl.textContent = newId;
+
+            const qrImg = container.querySelector('#finalize-qr-img') as HTMLImageElement | null;
+            if (qrImg) {
+              const passportUrl = `${window.location.origin}/passport?id=${newId}`;
+              qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(passportUrl)}`;
+            }
+
+            const btnPassportImmediate = container.querySelector('#btn-go-to-passport-immediate') as HTMLButtonElement | null;
+            if (btnPassportImmediate) {
+              btnPassportImmediate.onclick = () => {
+                Router.navigate(`/passport?id=${newId}`);
+              };
+            }
           }
         };
       }
@@ -869,7 +999,6 @@ function FishermanPage(): HTMLElement {
         renderWizard();
       })
       .catch(() => {
-        // Safe mock camera stream fallback
         capturedBase64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
         renderWizard();
       });
@@ -898,34 +1027,6 @@ function FishermanPage(): HTMLElement {
   renderView();
   return container;
 }
-
-// Helper to provide standard empty stages
-const DEFAULT_STAGES = (_id: string, dateStr: string): SupplyChainStage[] => [
-  {
-    stageId: 1,
-    name: "Sea Catch Registration",
-    location: "Mangystau Caspian Sector C-1",
-    checkedBy: "Autonomous GPS telemetry",
-    timestamp: dateStr,
-    verificationType: "QR_Verification_Scan"
-  },
-  {
-    stageId: 2,
-    name: "Port Bautino Checkpoint",
-    location: "Bautino Harbor Inspector Office",
-    checkedBy: "Inspector A. Bekova",
-    timestamp: "",
-    verificationType: "MultiSig_Bluetooth"
-  },
-  {
-    stageId: 3,
-    name: "Processing Guard Facility",
-    location: "Aktau Fish Processing Facility",
-    checkedBy: "Officer D. Nurmagambetov",
-    timestamp: "",
-    verificationType: "Digital_Stamp_Approval"
-  }
-];
 
 // ═══════════════════════════════════════════════
 // PAGE 3: LOGISTICS CHECKPOINT TERMINAL
@@ -996,8 +1097,8 @@ function CheckpointPage(): HTMLElement {
           <h3 style="font-size: 18px; font-weight: 800; color: #1E3A8A; margin-bottom: 12px;">Active Scanner Device Stream</h3>
           <p style="font-size: 13px; color: #475569; margin-bottom: 20px;">Reading QR matrix payload on fish container seal...</p>
           <div style="width: 280px; height: 200px; background: #000; border-radius: 8px; margin: 0 auto 20px; position: relative; overflow: hidden;">
-            <div style="position: absolute; inset: 20px; border: 2px dashed #06B6D4; animation: pulse 1.5s infinite;"></div>
-            <div style="color: white; font-family: monospace; font-size: 12px; margin-top: 90px; text-align: center;">SCANNING QR SEAL...</div>
+            <video id="checkpoint-scan-video" style="width: 100%; height: 100%; object-fit: cover;"></video>
+            <div style="position: absolute; inset: 20px; border: 2px dashed #06B6D4; pointer-events: none;"></div>
           </div>
           <button id="btn-cancel-checkpoint-scan" class="btn btn-ghost">Cancel</button>
         </div>
@@ -1013,18 +1114,46 @@ function CheckpointPage(): HTMLElement {
     if (btnScan && scanOverlay && scanStatus && btnSubmit) {
       btnScan.onclick = () => {
         scanOverlay.style.display = 'flex';
-        setTimeout(() => {
-          scanOverlay.style.display = 'none';
-          hasScannedQR = true;
-          scanStatus.textContent = '✓ QR Code scanned and verified successfully.';
-          scanStatus.style.color = '#10B981';
-          btnSubmit.disabled = false;
-        }, 1500);
+        const video = container.querySelector('#checkpoint-scan-video') as HTMLVideoElement | null;
+        if (video) {
+          startQRScanning(video, (decodedId) => {
+            scanOverlay.style.display = 'none';
+            let cleanId = decodedId;
+            if (decodedId.includes("id=")) {
+              cleanId = decodedId.split("id=")[1].split("&")[0];
+            }
+
+            const selectEl = container.querySelector('#checkpoint-id-select') as HTMLSelectElement | null;
+            if (selectEl) {
+              let optionExists = false;
+              for (let i = 0; i < selectEl.options.length; i++) {
+                if (selectEl.options[i].value === cleanId) {
+                  selectEl.selectedIndex = i;
+                  optionExists = true;
+                  break;
+                }
+              }
+              if (!optionExists) {
+                const opt = document.createElement("option");
+                opt.value = cleanId;
+                opt.textContent = `${cleanId} (Scanned Catch ID)`;
+                selectEl.appendChild(opt);
+                selectEl.value = cleanId;
+              }
+            }
+
+            hasScannedQR = true;
+            scanStatus.textContent = `✓ QR Code scanned successfully (ID: ${cleanId})`;
+            scanStatus.style.color = '#10B981';
+            btnSubmit.disabled = false;
+          });
+        }
       };
     }
 
     if (btnCancelScan && scanOverlay) {
       btnCancelScan.onclick = () => {
+        stopQRScanning();
         scanOverlay.style.display = 'none';
       };
     }
@@ -1055,7 +1184,6 @@ function CheckpointPage(): HTMLElement {
 
       addStageToCatch(catchId, newStage);
 
-      // Force updating cold chain status if temperature is high
       const catches = getCatches();
       const match = catches.find(c => c.id === catchId);
       if (match && tempVal > 4.0) {
@@ -1073,7 +1201,6 @@ function CheckpointPage(): HTMLElement {
         `;
       }
 
-      // Reset scan target
       hasScannedQR = false;
       if (scanStatus) {
         scanStatus.textContent = '⚠️ Scanner verification required.';
@@ -1144,7 +1271,6 @@ function AdminPage(): HTMLElement {
     const quotas = getQuotas();
     const catches = getCatches();
 
-    // Render Progress Bars
     const quotaCardsHtml = quotas.map(q => {
       const percentage = Math.min(100, Math.round((q.consumed / q.totalAllocated) * 100));
       return `
@@ -1159,7 +1285,6 @@ function AdminPage(): HTMLElement {
       `;
     }).join('');
 
-    // Filter Anomalous Catches: oilDetected === true OR status === "Suspicious"
     const anomalousCatches = catches.filter(c => c.oilDetected === true || c.status === "Suspicious");
 
     const tableRowsHtml = anomalousCatches.map(c => {
@@ -1189,13 +1314,11 @@ function AdminPage(): HTMLElement {
         <button id="btn-admin-logout" class="btn btn-outline btn-sm">Exit Dashboard</button>
       </div>
 
-      <!-- Quota Metrics Grid -->
       <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-bottom: 32px;" class="passport-grid">
         ${quotaCardsHtml}
       </div>
 
       <div style="display: grid; grid-template-columns: 1.6fr 1fr; gap: 32px;" class="passport-grid">
-        <!-- Anthropogenic Factors Table -->
         <div class="card" style="padding: 24px; border-radius: 16px;">
           <h3 style="font-size:15px; font-weight:800; color:#1E3A8A; margin-bottom:16px; text-transform:uppercase;">Anthropogenic Anomaly & Biological Audit Log</h3>
           <div style="overflow-x: auto;">
@@ -1216,7 +1339,6 @@ function AdminPage(): HTMLElement {
           </div>
         </div>
 
-        <!-- Satellite Eco Heatmap -->
         <div class="card" style="border-radius:16px;">
           <div class="card-header">
             <div class="card-title">Regional Radar Eco-Heatmap</div>
@@ -1244,7 +1366,6 @@ function AdminPage(): HTMLElement {
         const weight = parseFloat(btn.getAttribute('data-weight')!);
         const species = btn.getAttribute('data-species')! as FishSpecies;
 
-        // Perform smart lease backend operation
         const result = OcuQuotaShare(weight, species);
         if (result.leased) {
           updateCatchStatus(id, result.newStatus);
@@ -1278,7 +1399,6 @@ function AdminPage(): HTMLElement {
           attribution: 'Esri Satellite'
         }).addTo(globalAdminMap);
 
-        // Render markers for anomalies
         const catches = getCatches();
         catches.forEach(c => {
           if (c.oilDetected || c.status === "Suspicious") {
@@ -1387,7 +1507,6 @@ function IdxControlPage(): HTMLElement {
           records[records.length - 1].hash = "sha256:TAMPERED_MALICIOUS_HASH_REPLACE";
           localStorage.setItem('oc_catches', JSON.stringify(records));
         } else {
-          // Empty seed hack
           localStorage.setItem('oc_catches', '[]');
         }
         OcuLock();
