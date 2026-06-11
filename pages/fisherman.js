@@ -67,7 +67,6 @@ window.FishermanPage = function() {
       const pass = container.querySelector('#login-pass').value;
       const res = Auth.login(login, pass);
       if (res.success) {
-        // Reload page
         Router.render('/fisherman');
       } else {
         const errEl = container.querySelector('#login-error-msg');
