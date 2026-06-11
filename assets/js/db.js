@@ -1,13 +1,6 @@
-/**
- * OcuCast — Database and API Client
- * Seamlessly connects client-side SPA to local Node.js server (PostgreSQL on Neon).
- * Falls back to offline LocalStorage/JSON memory if server is offline.
- */
-
 const API_BASE = 'http://localhost:3001/api';
 
 const DB = {
-  // Static fallback values
   fishermen: [
     { id: 'F-001', name: 'Ержан Сейтжанов', login: 'fisher1', password: 'demo', vessel: 'Каспий-Стар', vessel_id: 'KZ-MNG-4412', status: 'approved', green_score: 94, license_expires: '2026-12-31', personal_quota: { sturgeon: 80, carp: 600, roach: 1200 }, used_quota: { sturgeon: 12, carp: 287, roach: 541 } },
     { id: 'F-002', name: 'Болат Жунисов', login: 'fisher2', password: 'demo', vessel: 'Мангистау', vessel_id: 'KZ-MNG-2287', status: 'pending', green_score: 71, license_expires: '2026-06-30', personal_quota: { sturgeon: 60, carp: 450, roach: 900 }, used_quota: { sturgeon: 0, carp: 0, roach: 0 } },
@@ -55,7 +48,6 @@ const DB = {
     { month: 'Дек', catch_kg: null, forecast: 3200 }
   ],
 
-  // Load dynamic data from localhost PostgreSQL server
   async init() {
     try {
       console.log('Synchronizing with localhost backend server...');
@@ -78,7 +70,6 @@ const DB = {
       console.log('Database synchronization complete.');
     } catch (err) {
       console.warn('Backend server offline. Running in offline-first mode using local storage & mocks.', err);
-      // Generate default offline catches if none loaded
       this.catches = [
         {
           id: 'OC-2026-000184',
@@ -115,14 +106,12 @@ const DB = {
   }
 };
 
-// Session wrapper
 const Session = {
   get currentUser() { try { return JSON.parse(sessionStorage.getItem('oc_user')); } catch { return null; } },
   set currentUser(u) { if (u) sessionStorage.setItem('oc_user', JSON.stringify(u)); else sessionStorage.removeItem('oc_user'); },
   get role() { const u = this.currentUser; return u ? u.role : null; }
 };
 
-// OcuChain Ledger offline blockchain
 const OcuChain = {
   STORAGE_KEY: 'ocuchain_ledger',
 
