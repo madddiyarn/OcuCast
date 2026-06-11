@@ -73,7 +73,6 @@ export function OcuLock(): void {
       user.status = 'suspended';
       sessionStorage.setItem('oc_user', JSON.stringify(user));
     } catch {
-      // Graceful bypass
     }
   }
 }
