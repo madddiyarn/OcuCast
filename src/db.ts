@@ -300,5 +300,4 @@ export function verifyBlockchainIntegrity(): { valid: boolean; brokenAtIdx?: num
   return { valid: true };
 }
 
-// Synchronously boot storage representation
 initStorage();
