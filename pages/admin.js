@@ -1,8 +1,3 @@
-/**
- * OcuCast — Ситуационный центр Акимата (Light Mode)
- * Подключается к Node.js API серверу (PostgreSQL).
- */
-
 window.AdminPage = function() {
   const container = document.createElement('div');
   container.className = 'page-content container fade-in';
@@ -50,7 +45,6 @@ window.AdminPage = function() {
   }
 
   function renderDashboard() {
-    // Calculate quotas
     const currentQuotaUsed = { sturgeon: 1243, carp: 18764, roach: 31882 };
     DB.catches.forEach(c => {
       if (c.species_en === 'sturgeon') currentQuotaUsed.sturgeon += c.weight_kg;
@@ -62,7 +56,6 @@ window.AdminPage = function() {
     const carpPct = ((currentQuotaUsed.carp / DB.nationalQuota2026.carp.total) * 100).toFixed(0);
     const roachPct = ((currentQuotaUsed.roach / DB.nationalQuota2026.roach.total) * 100).toFixed(0);
 
-    // Chart configs
     const months = DB.monthlyCatch;
     const maxVal = 12000;
     const width = 600;
@@ -237,10 +230,8 @@ window.AdminPage = function() {
       </div>
     `;
 
-    // Events
     container.querySelector('#btn-admin-logout').onclick = () => { Auth.logout(); render(); };
 
-    // Tabs
     container.querySelectorAll('.tab-btn').forEach(btn => {
       btn.onclick = () => {
         activeTab = btn.getAttribute('data-tab');
@@ -248,7 +239,6 @@ window.AdminPage = function() {
       };
     });
 
-    // Fisherman Approval status modifier
     container.querySelectorAll('.btn-action-approve').forEach(btn => {
       btn.onclick = async () => {
         const id = btn.getAttribute('data-id');
@@ -279,7 +269,6 @@ window.AdminPage = function() {
       };
     });
 
-    // Quota lease approve
     container.querySelectorAll('.btn-action-approve-quota').forEach(btn => {
       btn.onclick = async () => {
         const id = btn.getAttribute('data-id');
@@ -288,14 +277,12 @@ window.AdminPage = function() {
           try {
             log.status = 'approved_manually';
             
-            // Post status update
             await fetch(`${API_BASE}/antifrod`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(log)
             });
 
-            // Create approved catch record
             const newCatch = {
               fisherman_id: 'F-001',
               vessel: log.vessel,
