@@ -1,9 +1,3 @@
-/**
- * OcuCast — Fisherman Page (Terminal & Wizard Master)
- * Premium Light Mode, Inter Font, Step-by-Step wizard.
- * Direct web-camera activation, scale simulator, AntiGravity blocker.
- */
-
 window.FishermanPage = function() {
   const container = document.createElement('div');
   container.className = 'page-content container fade-in';
@@ -21,13 +15,11 @@ window.FishermanPage = function() {
   function render() {
     const user = Session.currentUser;
 
-    // Route guard: Require login
     if (!user || user.role !== 'fisherman') {
       renderLoginForm();
       return;
     }
 
-    // Route guard: Check moderation status
     if (user.status === 'pending') {
       renderPendingApproval();
       return;
@@ -36,9 +28,6 @@ window.FishermanPage = function() {
     renderWizard();
   }
 
-  // ─────────────────────────────────────────────
-  // 1. LOGIN FORM
-  // ─────────────────────────────────────────────
   function renderLoginForm() {
     container.innerHTML = `
       <div class="login-screen">
@@ -87,9 +76,6 @@ window.FishermanPage = function() {
     };
   }
 
-  // ─────────────────────────────────────────────
-  // 2. PENDING MODERATION STATE
-  // ─────────────────────────────────────────────
   function renderPendingApproval() {
     container.innerHTML = `
       <div style="max-width: 600px; margin: 40px auto;" class="slide-up">
@@ -126,13 +112,9 @@ window.FishermanPage = function() {
     };
   }
 
-  // ─────────────────────────────────────────────
-  // 3. WIZARD TERMINAL
-  // ─────────────────────────────────────────────
   function renderWizard() {
     const user = Session.currentUser;
 
-    // Calculate wizard steps markup
     const steps = [
       { num: 1, label: 'Калибровка веса' },
       { num: 2, label: 'Биометрия и камера' },
@@ -153,11 +135,9 @@ window.FishermanPage = function() {
       `;
     }).join('');
 
-    // Active screen HTML
     let stepContentHtml = '';
 
     if (currentStep === 1) {
-      // Step 1: Weight Calibration
       stepContentHtml = `
         <div class="slide-up">
           <h2 style="font-size: 18px; font-weight: 800; color: var(--navy); margin-bottom: 12px;">Шаг 1: Автофиксация веса улова</h2>
@@ -200,7 +180,6 @@ window.FishermanPage = function() {
         </div>
       `;
     } else if (currentStep === 2) {
-      // Step 2: Device Camera / Biomety
       stepContentHtml = `
         <div class="slide-up">
           <h2 style="font-size: 18px; font-weight: 800; color: var(--navy); margin-bottom: 12px;">Шаг 2: Камера и ИИ-Анализ биометрии</h2>
@@ -286,7 +265,6 @@ window.FishermanPage = function() {
         </div>
       `;
     } else if (currentStep === 3) {
-      // Step 3: Quota and Smart-Exchange lease
       const quotaResult = OcuQuota.checkAndShare(user.id, selectedSpecies, simulatedWeight);
       const isQuotaExceeded = quotaResult.quota_share_used;
 
@@ -339,7 +317,6 @@ window.FishermanPage = function() {
         </div>
       `;
     } else if (currentStep === 4) {
-      // Step 4: Verification, local storage ledger, and mock bluetooth printer receipt
       const recValue = (simulatedWeight * (selectedSpecies==='sturgeon'?5000:selectedSpecies==='carp'?950:1200)).toLocaleString('ru-KZ');
 
       stepContentHtml = `
@@ -462,7 +439,6 @@ window.FishermanPage = function() {
       </div>
     `;
 
-    // Hook events depending on the current step
     container.querySelector('#btn-logout').onclick = () => {
       Auth.logout();
       Router.render('/fisherman');
@@ -528,10 +504,8 @@ window.FishermanPage = function() {
       const btnNext = container.querySelector('#wizard-step2-next');
       btnNext.onclick = () => {
         stopCamera();
-        // Check if AntiGravity is blocked
         const agCheck = AntiGravity.check(selectedSpecies, simulatedWeight, gyroAngle);
         if (agCheck.blocked) {
-          // Stay on step 2, show error
           runAntiGravityCheck();
         } else {
           currentStep = 3;
@@ -540,7 +514,6 @@ window.FishermanPage = function() {
       };
 
       if (capturedImage) {
-        // Run AI UI animation simulation
         simulateAIProgress();
       }
     } else if (currentStep === 3) {
@@ -563,7 +536,6 @@ window.FishermanPage = function() {
       const printStatus = container.querySelector('#print-status-msg');
 
       btnPrint.onclick = () => {
-        // Run database catch registry
         isSubmitting = true;
         btnPrint.disabled = true;
         printStatus.innerHTML = `
@@ -618,9 +590,6 @@ window.FishermanPage = function() {
     }
   }
 
-  // ─────────────────────────────────────────────
-  // CAMERA OPERATIONS
-  // ─────────────────────────────────────────────
   function startCamera() {
     isCameraActive = true;
     renderWizard();
@@ -636,7 +605,7 @@ window.FishermanPage = function() {
         })
         .catch(err => {
           console.warn("Камера недоступна, запускаем симуляцию.", err);
-          // Draw fake moving video on canvas
+
           simulateVideoCanvas();
         });
     }, 100);
@@ -646,7 +615,6 @@ window.FishermanPage = function() {
     const video = container.querySelector('#webcam-preview');
     if (video) video.style.display = 'none';
 
-    // Insert fake preview box with animation
     const containerBody = container.querySelector('.card-body');
     const simBox = document.createElement('div');
     simBox.id = 'simulated-camera-view';
@@ -689,9 +657,6 @@ window.FishermanPage = function() {
     isCameraActive = false;
   }
 
-  // ─────────────────────────────────────────────
-  // ML MODEL SIMULATION
-  // ─────────────────────────────────────────────
   function simulateAIProgress() {
     setTimeout(() => {
       const data = AIAnalysis.analyze(selectedSpecies, simulatedWeight);
@@ -717,7 +682,6 @@ window.FishermanPage = function() {
         pctFreshness.textContent = data.freshness_index + '%';
       }
 
-      // Check AntiGravity blocker and render if necessary
       runAntiGravityCheck();
     }, 400);
   }
