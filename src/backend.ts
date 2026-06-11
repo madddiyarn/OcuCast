@@ -110,7 +110,6 @@ export function executeLiveSatelliteAudit(catchId: string, satelliteInputCode: s
         c.satelliteAuditLog = `[SATELLITE AUDIT - ABUSE DETECTED] High-probability illegal mid-sea rendezvous flagged. Shadow transshipment alert. Details: ${descriptionText}`;
       }
 
-      // Re-sign blockchain hashes
       let prevHash = "0000000000000000";
       for (let i = 0; i < catches.length; i++) {
         if (i > 0) prevHash = catches[i - 1].hash;
@@ -119,7 +118,6 @@ export function executeLiveSatelliteAudit(catchId: string, satelliteInputCode: s
 
       localStorage.setItem('oc_catches', JSON.stringify(catches));
 
-      // Recalculate quotas
       const quotasRaw = localStorage.getItem('oc_quotas');
       if (quotasRaw) {
         const quotas: QuotaLimit[] = JSON.parse(quotasRaw);
