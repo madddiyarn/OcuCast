@@ -1,9 +1,3 @@
-/**
- * OcuCast — Checkpoint Page (Logistics & Inspectors Portal)
- * Premium Light Mode, Inter Font.
- * Registration of new supply chain stages, Multi-Sig verification.
- */
-
 window.CheckpointPage = function() {
   const container = document.createElement('div');
   container.className = 'page-content container fade-in';
@@ -15,7 +9,6 @@ window.CheckpointPage = function() {
   function render() {
     const user = Session.currentUser;
 
-    // Route guard: Require inspector or admin role
     if (!user || (user.role !== 'inspector' && user.role !== 'admin')) {
       renderLoginForm();
       return;
@@ -24,9 +17,6 @@ window.CheckpointPage = function() {
     renderCheckpointTerminal();
   }
 
-  // ─────────────────────────────────────────────
-  // LOGIN FORM
-  // ─────────────────────────────────────────────
   function renderLoginForm() {
     container.innerHTML = `
       <div class="login-screen">
@@ -75,9 +65,6 @@ window.CheckpointPage = function() {
     };
   }
 
-  // ─────────────────────────────────────────────
-  // CHECKPOINT FORM TERMINAL
-  // ─────────────────────────────────────────────
   function renderCheckpointTerminal() {
     const user = Session.currentUser;
 
@@ -189,7 +176,6 @@ window.CheckpointPage = function() {
       </div>
     `;
 
-    // Hook events
     container.querySelector('#btn-logout').onclick = () => {
       Auth.logout();
       Router.render('/checkpoint');
@@ -199,7 +185,6 @@ window.CheckpointPage = function() {
     const verifyBtn = container.querySelector('#btn-verify-catch');
     const verifyStatus = container.querySelector('#catch-verify-status');
     
-    // Inputs elements to control disabled state
     const stageSelect = container.querySelector('#stage-select');
     const tempInput = container.querySelector('#temp-input');
     const locInput = container.querySelector('#loc-input');
@@ -217,13 +202,10 @@ window.CheckpointPage = function() {
             ✓ Идентификатор найден в реестре OcuChain. Судно: <strong>"${found.vessel}"</strong>.
           </div>
         `;
-        // Enable fields
         stageSelect.disabled = false;
         tempInput.disabled = false;
         locInput.disabled = false;
         multisigBtn.disabled = false;
-        
-        // Populate default location based on stage
         locInput.value = user.role === 'admin' ? 'Актау Ситуационный Центр' : 'Порт Баутино';
         
         renderCatchDetails(found);
@@ -234,7 +216,6 @@ window.CheckpointPage = function() {
             ❌ ID не найден. Проверьте правильность ввода.
           </div>
         `;
-        // Disable fields
         stageSelect.disabled = true;
         tempInput.disabled = true;
         locInput.disabled = true;
@@ -251,7 +232,6 @@ window.CheckpointPage = function() {
     };
 
     stageSelect.onchange = () => {
-      // Auto-set recommended temperature based on stage
       const stage = stageSelect.value;
       if (stage === 'port') {
         tempInput.value = '2'; // Cool
@@ -303,9 +283,7 @@ window.CheckpointPage = function() {
             <div><strong>Этап успешно верифицирован!</strong> Изменения мгновенно добавлены на публичный паспорт и отправлены в распределенный лог OcuChain.</div>
           </div>
         `;
-        // Refresh details
         renderCatchDetails(selectedCatch);
-        // Reset form state
         submitBtn.disabled = true;
         isMultisigSigned = false;
         multisigBtn.className = 'btn btn-cyan btn-block';
