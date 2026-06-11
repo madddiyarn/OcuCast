@@ -1,8 +1,3 @@
-/**
- * OcuCast — SPA Router (hash-based clean paths)
- * Routes: /passport, /fisherman, /checkpoint, /admin, /idx-control
- */
-
 const Router = {
   routes: {},
   currentPath: null,
@@ -12,7 +7,6 @@ const Router = {
   },
 
   navigate(path, pushState = true) {
-    // Clean path
     const clean = path.startsWith('/') ? path : '/' + path;
     if (pushState && this.currentPath !== clean) {
       history.pushState({ path: clean }, '', clean);
@@ -37,13 +31,11 @@ const Router = {
   },
 
   init() {
-    // Handle browser back/forward
     window.addEventListener('popstate', e => {
       const path = e.state?.path || window.location.pathname;
       this.render(path);
     });
 
-    // Click delegation for nav links
     document.addEventListener('click', e => {
       const a = e.target.closest('[data-route]');
       if (a) {
@@ -52,7 +44,6 @@ const Router = {
       }
     });
 
-    // Initial render
     const initial = window.location.pathname || '/passport';
     this.render(initial === '/' ? '/passport' : initial);
   }
