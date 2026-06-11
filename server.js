@@ -1,7 +1,4 @@
-/**
- * OcuCast Backend Express Server
- * Integrates PostgreSQL (Neon) and OpenRouter AI Vision API.
- */
+
 
 const express = require('express');
 const cors = require('cors');
@@ -15,7 +12,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Database connection pool
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL
 });
@@ -28,11 +25,7 @@ pool.connect((err, client, release) => {
   release();
 });
 
-// ═══════════════════════════════════════════════
-// API ENDPOINTS
-// ═══════════════════════════════════════════════
 
-// Get all catches
 app.get('/api/catches', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM catches ORDER BY timestamp DESC');
@@ -57,7 +50,7 @@ app.get('/api/catches/:id', async (req, res) => {
   }
 });
 
-// Submit a catch
+
 app.post('/api/catches', async (req, res) => {
   const { fisherman_id, vessel, species, species_en, weight_kg, gps_lat, gps_lng, freshness_index, quota_share_used, quota_share_partner_vessel, quota_share_partner_name, hash, supply_chain } = req.body;
   
@@ -84,7 +77,7 @@ app.post('/api/catches', async (req, res) => {
 
     const result = await pool.query(query, values);
     
-    // Update used quota of the fisherman
+
     const fishermanResult = await pool.query('SELECT used_quota FROM fishermen WHERE id = $1', [fisherman_id]);
     if (fishermanResult.rows.length > 0) {
       const currentUsed = fishermanResult.rows[0].used_quota;
@@ -100,7 +93,7 @@ app.post('/api/catches', async (req, res) => {
   }
 });
 
-// Update catch supply chain stage
+
 app.post('/api/checkpoint', async (req, res) => {
   const { catch_id, stage, temperature, location, inspector_name } = req.body;
 
@@ -136,7 +129,7 @@ app.post('/api/checkpoint', async (req, res) => {
   }
 });
 
-// Get all fishermen
+
 app.get('/api/fishermen', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM fishermen');
@@ -147,7 +140,7 @@ app.get('/api/fishermen', async (req, res) => {
   }
 });
 
-// Update fisherman status (Akimat moderating)
+
 app.post('/api/fishermen/status', async (req, res) => {
   const { id, status } = req.body;
   try {
@@ -159,7 +152,7 @@ app.post('/api/fishermen/status', async (req, res) => {
   }
 });
 
-// Get antifrod logs
+
 app.get('/api/antifrod', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM antifrod_log ORDER BY ts DESC');
@@ -170,7 +163,7 @@ app.get('/api/antifrod', async (req, res) => {
   }
 });
 
-// Submit/Update antifrod log
+
 app.post('/api/antifrod', async (req, res) => {
   const { id, vessel, species, weight, reason, status, sent_to_moderator } = req.body;
   try {
@@ -190,7 +183,6 @@ app.post('/api/antifrod', async (req, res) => {
   }
 });
 
-// Delete an incident once resolved
 app.delete('/api/antifrod/:id', async (req, res) => {
   try {
     await pool.query('DELETE FROM antifrod_log WHERE id = $1', [req.params.id]);
@@ -201,9 +193,6 @@ app.delete('/api/antifrod/:id', async (req, res) => {
   }
 });
 
-// ═══════════════════════════════════════════════
-// OPENROUTER AI VISION API
-// ═══════════════════════════════════════════════
 app.post('/api/ai/analyze', async (req, res) => {
   const { imageBase64, species_en, weight_kg } = req.body;
   const apiKey = process.env.OPENROUTER_API_KEY;
@@ -213,7 +202,7 @@ app.post('/api/ai/analyze', async (req, res) => {
   }
 
   try {
-    // Call OpenRouter with a structured system prompt to analyze the catch image
+
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -268,7 +257,7 @@ app.post('/api/ai/analyze', async (req, res) => {
         res.json(data);
       } catch (jsonErr) {
         console.warn('AI did not return valid JSON:', responseText);
-        // Fallback standard parameters
+   
         res.json({ species_confidence: 97, anomaly_detection: 95, freshness_index: 96, bio_status: 'normal' });
       }
     } else {
@@ -277,7 +266,7 @@ app.post('/api/ai/analyze', async (req, res) => {
     }
   } catch (err) {
     console.error('Error calling OpenRouter API:', err);
-    // Silent fail gracefully, return standard validation
+  
     res.json({ species_confidence: 98, anomaly_detection: 94, freshness_index: 96, bio_status: 'normal' });
   }
 });
