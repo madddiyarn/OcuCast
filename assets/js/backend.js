@@ -1,13 +1,5 @@
-/**
- * OcuCast — Backend Client Controller
- * Translates SPA actions to Express Server API calls.
- */
-
 const OcuQuota = {
-  /**
-   * Check if fisherman's personal quota is exceeded
-   * and automatically find/rent quota shares from other vessels
-   */
+
   checkAndShare(fisherman_id, species_en, additional_kg) {
     const fisherman = DB.fishermen.find(f => f.id === fisherman_id);
     if (!fisherman) return { success: false, error: 'Рыбак не найден' };
@@ -20,7 +12,6 @@ const OcuQuota = {
 
     const deficit = additional_kg - remaining;
 
-    // Search available quota among other fishermen
     const donors = DB.fishermen.filter(f =>
       f.id !== fisherman_id &&
       f.status === 'approved' &&
@@ -39,7 +30,6 @@ const OcuQuota = {
     const donor = donors.find(d => d.vessel === 'Каспий-Стар') || donors[0];
     const tx_id = 'EX-' + Math.floor(Math.random() * 1000);
 
-    // Update quota locally
     donor.used_quota[species_en] += deficit;
     fisherman.used_quota[species_en] += additional_kg;
 
@@ -65,7 +55,6 @@ const AntiGravity = {
     const checks = [];
     let blocked = false;
 
-    // 1. Biological maximum weight
     const bioOk = weight_kg <= limit.max_weight_kg;
     checks.push({
       label: `Биологический максимум веса`,
@@ -76,7 +65,6 @@ const AntiGravity = {
     });
     if (!bioOk) blocked = true;
 
-    // 2. Typical weight
     const typicalOk = weight_kg <= limit.max_weight_kg * 0.85;
     checks.push({
       label: `Типичный вес вида`,
@@ -86,7 +74,6 @@ const AntiGravity = {
       critical: !typicalOk && !bioOk
     });
 
-    // 3. Gyroscope angle
     const gyroOk = gyro_angle_deg <= 45;
     checks.push({
       label: `Угол наклона камеры (Гироскоп)`,
@@ -97,7 +84,6 @@ const AntiGravity = {
     });
     if (!gyroOk) blocked = true;
 
-    // 4. Min weight
     const minOk = weight_kg >= 0.1;
     checks.push({
       label: `Минимальный регистрируемый вес`,
@@ -160,10 +146,9 @@ const AntiGravity = {
         body: JSON.stringify(pending)
       });
       if (response.ok) {
-        await DB.init(); // Refresh DB
+        await DB.init();
       }
     } catch (e) {
-      // Offline fallback
       DB.antifrodLog.unshift({ ...pending, ts: new Date().toISOString() });
     }
 
@@ -187,23 +172,19 @@ const OcuLock = {
 
 const CatchController = {
   async submit({ fisherman_id, species_en, weight_kg, gyro_angle = 12 }) {
-    // 1. AntiGravity check
     const agResult = AntiGravity.check(species_en, weight_kg, gyro_angle);
     if (agResult.blocked) {
       return { success: false, stage: 'antifrod', agResult };
     }
 
-    // 2. OcuLock check
     const fisherman = DB.fishermen.find(f => f.id === fisherman_id);
     if (!fisherman) return { success: false, error: 'Рыбак не найден' };
     if (OcuLock.isLocked(fisherman.vessel_id)) {
       return { success: false, error: 'Лицензия заблокирована OcuLock из-за разрыва хэш-цепочки.' };
     }
 
-    // 3. Quota check & lease
     const quotaResult = OcuQuota.checkAndShare(fisherman_id, species_en, weight_kg);
 
-    // 4. Offline blockchain record creation
     const record = {
       fisherman_id,
       vessel: fisherman.vessel,
@@ -227,7 +208,6 @@ const CatchController = {
     const ledgerEntry = OcuChain.addEntry(record);
     record.hash = ledgerEntry.hash;
 
-    // 5. Submit to backend API
     try {
       const response = await fetch(`${API_BASE}/catches`, {
         method: 'POST',
@@ -243,7 +223,6 @@ const CatchController = {
       console.warn('Backend connection failed. Storing locally.');
     }
 
-    // Fallback offline submission
     record.id = `OC-2026-${Math.floor(100000 + Math.random() * 900000)}`;
     record.timestamp = new Date().toISOString();
     record.gps_label = 'Актау, море (Offline)';
@@ -295,7 +274,6 @@ const CheckpointController = {
       console.warn('Backend server unreachable, falling back to local simulation.');
     }
 
-    // Local simulation fallback
     const record = DB.catches.find(c => c.id === catch_id);
     if (!record) return { success: false, error: 'ID улова не найден' };
 
