@@ -1,39 +1,27 @@
-/* ============================================
-   OcuCast Design System — Horizon Premium SaaS Style
-   Ultra Light Theme · Gradient Accents · Inter Font
-   ============================================ */
-
-/* ── DESIGN TOKENS ──────────────────────────── */
 :root {
-  /* Backgrounds with soft SaaS gradients */
   --bg-primary:    #F8FAFC;
   --bg-secondary:  #F1F5F9;
   --bg-card:       #FFFFFF;
   --bg-dark:       #0B0F19;
   --bg-dark-2:     #111827;
 
-  /* Typography */
   --text-primary:  #0F172A;
   --text-secondary:#475569;
   --text-muted:    #94A3B8;
   --text-inverse:  #F8FAFC;
 
-  /* Accents */
   --cyan:          #06B6D4;
   --cyan-light:    #ECFEFF;
   --cyan-dark:     #0891B2;
   
-  /* SaaS Gradients */
   --grad-primary:  linear-gradient(135deg, #1E3A8A 0%, #06B6D4 100%);
   --grad-cyan:     linear-gradient(135deg, #06B6D4 0%, #1E3A8A 100%);
   --grad-light:    linear-gradient(135deg, rgba(207, 250, 254, 0.5) 0%, rgba(219, 234, 254, 0.4) 100%);
 
-  /* Navy / Buttons */
   --navy:          #1E3A8A;
   --navy-light:    #06B6D4;
   --navy-dark:     #172554;
 
-  /* Status */
   --red:           #EF4444;
   --red-light:     #FEF2F2;
   --green:         #10B981;
@@ -41,14 +29,12 @@
   --amber:         #F59E0B;
   --amber-light:   #FEF3C7;
 
-  /* Structural */
   --radius-sm:     8px;
   --radius-md:     14px;
   --radius-lg:     16px;
   --radius-xl:     28px;
   --radius-full:   9999px;
 
-  /* Subtle Premium Shadows */
   --shadow-sm:     0 2px 8px rgba(15, 23, 42, 0.03), 0 1px 2px rgba(15, 23, 42, 0.02);
   --shadow-md:     0 12px 30px -10px rgba(15, 23, 42, 0.08), 0 4px 12px -5px rgba(15, 23, 42, 0.03);
   --shadow-lg:     0 25px 50px -12px rgba(15, 23, 42, 0.12);
@@ -56,13 +42,10 @@
 
   --header-h:      74px;
 }
-
-/* ── RESET & GLOBAL ─────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body {
   font-family: 'Inter', -apple-system, sans-serif;
   background: var(--bg-primary);
-  /* Horizon Radial Glow Background */
   background-image: 
     radial-gradient(at 0% 0%, rgba(207, 250, 254, 0.25) 0, transparent 40%),
     radial-gradient(at 50% 0%, rgba(219, 234, 254, 0.35) 0, transparent 50%),
@@ -79,7 +62,6 @@ a { color: inherit; text-decoration: none; }
 button { font-family: inherit; cursor: pointer; border: none; outline: none; }
 input, select, textarea { font-family: inherit; }
 
-/* ── LAYOUT ──────────────────────────────────── */
 #app-root { min-height: 100vh; display: flex; flex-direction: column; }
 #page-container {
   flex: 1;
@@ -95,7 +77,6 @@ input, select, textarea { font-family: inherit; }
   padding: 48px 0 80px;
 }
 
-/* ── HEADER (SaaS blur navbar) ───────────────── */
 #site-header {
   position: fixed;
   top: 0; left: 0; right: 0;
@@ -207,7 +188,6 @@ input, select, textarea { font-family: inherit; }
   box-shadow: 0 10px 20px -10px rgba(139, 92, 246, 0.4);
 }
 
-/* ── PREMIUM CARDS (SaaS style) ──────────────── */
 .card {
   background: var(--bg-card);
   border-radius: var(--radius-lg);
@@ -235,7 +215,6 @@ input, select, textarea { font-family: inherit; }
   color: var(--text-muted);
 }
 
-/* ── BUTTONS (Horizon-inspired rounded) ──────── */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -285,7 +264,6 @@ input, select, textarea { font-family: inherit; }
   color: white;
 }
 
-/* ── TIMELINE & CHECKLISTS (SaaS details) ─────── */
 .timeline {
   position: relative;
   padding-left: 32px;
@@ -329,7 +307,6 @@ input, select, textarea { font-family: inherit; }
 .timeline-title { font-size: 13.5px; font-weight: 700; margin-top: 2px; }
 .timeline-desc { font-size: 12.5px; color: var(--text-secondary); }
 
-/* ── FORM ELEMENTS ───────────────────────────── */
 .form-group { margin-bottom: 18px; }
 .form-label {
   display: block;
@@ -361,7 +338,6 @@ input, select, textarea { font-family: inherit; }
   padding-right: 40px;
 }
 
-/* ── TABS ────────────────────────────────────── */
 .tabs {
   display: flex;
   background: rgba(241, 245, 249, 0.8);
@@ -386,7 +362,6 @@ input, select, textarea { font-family: inherit; }
   box-shadow: var(--shadow-sm);
 }
 
-/* ── ALERTS (Clean Soft SaaS Alert) ──────────── */
 .alert {
   padding: 14px 18px;
   border-radius: 14px;
@@ -402,7 +377,6 @@ input, select, textarea { font-family: inherit; }
 .alert-red { background: #FEF2F2; color: #991B1B; border: 1px solid #FECACA; }
 .alert-amber { background: #FFFBEB; color: #92400E; border: 1px solid #FDE68A; }
 
-/* ── STAT CARDS ──────────────────────────────── */
 .stat-card {
   background: var(--bg-card);
   border-radius: var(--radius-lg);
@@ -429,7 +403,6 @@ input, select, textarea { font-family: inherit; }
   margin-left: 4px;
 }
 
-/* ── TABLES ──────────────────────────────────── */
 .data-table {
   width: 100%;
   border-collapse: collapse;
@@ -453,14 +426,12 @@ input, select, textarea { font-family: inherit; }
   background: #F8FAFC;
 }
 
-/* ── MAP CONTAINER ───────────────────────────── */
 .map-container {
   height: 100%;
   width: 100%;
   background: #E2E8F0;
 }
 
-/* ── FOOTER ──────────────────────────────────── */
 #site-footer {
   background: #FFFFFF;
   border-top: 1px solid rgba(15, 23, 42, 0.05);
@@ -509,7 +480,6 @@ input, select, textarea { font-family: inherit; }
   color: var(--text-muted);
 }
 
-/* ── PROGRESS BARS ───────────────────────────── */
 .progress-track {
   height: 6px;
   background: #F1F5F9;
@@ -526,7 +496,6 @@ input, select, textarea { font-family: inherit; }
 .progress-red { background: var(--red); }
 .progress-green { background: #10B981; }
 
-/* ── LOADING SCREEN ──────────────────────────── */
 #loading-screen {
   position: fixed;
   inset: 0;
@@ -566,7 +535,6 @@ input, select, textarea { font-family: inherit; }
 }
 @keyframes load { to { width: 100%; } }
 
-/* ── LOGIN DRAWER ────────────────────────────── */
 .login-screen {
   display: flex;
   align-items: center;
@@ -583,7 +551,6 @@ input, select, textarea { font-family: inherit; }
   border: 1px solid rgba(15, 23, 42, 0.05);
 }
 
-/* ── WIZARD PROGRESS ─────────────────────────── */
 .wizard-progress {
   display: flex;
   align-items: center;
@@ -609,7 +576,6 @@ input, select, textarea { font-family: inherit; }
   color: #fff;
 }
 
-/* ── weight visualizer ───────────────────────── */
 .weight-display {
   text-align: center;
 }
@@ -629,7 +595,6 @@ input, select, textarea { font-family: inherit; }
   border-radius: var(--radius-full);
 }
 
-/* ── AI Panel Glow ───────────────────────────── */
 .ai-panel {
   background: linear-gradient(135deg, rgba(59, 130, 246, 0.02) 0%, rgba(139, 92, 246, 0.04) 100%);
   border: 1px solid rgba(139, 92, 246, 0.15);
@@ -647,7 +612,6 @@ input, select, textarea { font-family: inherit; }
   gap: 6px;
 }
 
-/* ── ANTIGRAVITY ALERT ── */
 .antigravity-alert {
   border-radius: 14px;
 }
@@ -664,7 +628,6 @@ input, select, textarea { font-family: inherit; }
 }
 .check-row:last-child { border-bottom: none; }
 
-/* ── CYBER GLOW (Idx Control overrides) ──────── */
 .terminal {
   border-radius: 12px;
   overflow: hidden;
@@ -695,14 +658,12 @@ input, select, textarea { font-family: inherit; }
 .terminal-line .ok { color: #10B981; }
 .terminal-line .err { color: #EF4444; }
 
-/* ── RESPONSIVE ──────────────────────────────── */
 @media (max-width: 768px) {
   .header-nav { display: none; }
   .passport-grid { grid-template-columns: 1fr !important; }
   .container { padding: 0 20px; }
 }
 
-/* ── PREMIUM ANIMATIONS & SOFT APPEARANCES ──── */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
@@ -731,8 +692,6 @@ input, select, textarea { font-family: inherit; }
   animation: statusPulse 2s infinite ease-in-out;
   border-radius: 50%;
 }
-
-/* Hover scales and smooth easing overrides */
 .card {
   transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.4s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.4s cubic-bezier(0.16, 1, 0.3, 1) !important;
 }
@@ -771,7 +730,6 @@ input, select, textarea { font-family: inherit; }
   transform: scale(1.01);
 }
 
-/* ── CUSTOM RANGE SLIDER OVERRIDES ───────────── */
 input[type="range"] {
   -webkit-appearance: none;
   width: 100%;
@@ -798,7 +756,6 @@ input[type="range"]::-webkit-slider-thumb:hover {
   background: var(--navy);
 }
 
-/* ── PREMIUM GLASS CARD & LOGINS ─────────────── */
 .login-card {
   background: rgba(255, 255, 255, 0.85) !important;
   backdrop-filter: blur(20px);
@@ -808,7 +765,6 @@ input[type="range"]::-webkit-slider-thumb:hover {
   transition: box-shadow 0.3s ease;
 }
 
-/* ── TABLE OVERRIDES FOR SAAS AESTHETIC ───────── */
 .data-table {
   width: 100%;
   border-collapse: separate;
