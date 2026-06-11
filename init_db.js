@@ -1,7 +1,3 @@
-/**
- * OcuCast — Database Initialization Script
- * Connects to Neon PostgreSQL and creates tables + inserts seed data.
- */
 
 const { Client } = require('pg');
 require('dotenv').config();
@@ -16,7 +12,6 @@ async function init() {
     await client.connect();
     console.log('Connected successfully!');
 
-    // 1. Create tables
     console.log('Creating tables...');
     
     await client.query(`
@@ -75,7 +70,6 @@ async function init() {
 
     console.log('Tables created or already exist.');
 
-    // 2. Insert seed data if empty
     const checkFishermen = await client.query('SELECT COUNT(*) FROM fishermen');
     if (parseInt(checkFishermen.rows[0].count) === 0) {
       console.log('Seeding fishermen...');
