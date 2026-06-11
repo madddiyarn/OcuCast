@@ -1,17 +1,7 @@
-/**
- * OcuCast — Main Application Bootstrap
- * Initializes SPA router, binds Header & Footer, handles layout.
- */
-
 document.addEventListener('DOMContentLoaded', async () => {
-
-  // ═══════════════════════════════════════════════
-  // 1. CONSTRUCT GLOBAL HEADER & FOOTER TEMPLATE
-  // ═══════════════════════════════════════════════
 
   const appRoot = document.getElementById('app-root');
 
-  // Create Header Element
   const header = document.createElement('header');
   header.id = 'site-header';
   header.innerHTML = `
@@ -60,15 +50,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     </div>
   `;
 
-  // Create Page View Wrapper Container
   const pageContainer = document.createElement('div');
   pageContainer.id = 'page-container';
 
-  // Create Footer Element
   const footer = document.createElement('footer');
   footer.id = 'site-footer';
   
-  // Dynamic update of current chain hash in the footer
   function updateFooterHash() {
     const chain = OcuChain.getChain();
     const lastHash = chain.length ? chain[chain.length - 1].hash : 'sha256:0000000000000000000000000';
@@ -113,15 +100,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   updateFooterHash();
 
-  // Assemble into app-root
-  appRoot.innerHTML = ''; // clear loading fallback
+  appRoot.innerHTML = ''; 
   appRoot.appendChild(header);
   appRoot.appendChild(pageContainer);
   appRoot.appendChild(footer);
-
-  // ═══════════════════════════════════════════════
-  // 2. REGISTER SPA ROUTER PAGES
-  // ═══════════════════════════════════════════════
 
   Router.register('/passport', PassportPage);
   Router.register('/fisherman', FishermanPage);
@@ -129,16 +111,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   Router.register('/admin', AdminPage);
   Router.register('/idx-control', IdxControlPage);
 
-  // ═══════════════════════════════════════════════
-  // 3. UTILITY EVENT HANDLERS
-  // ═══════════════════════════════════════════════
-
-  // Header scroll shadow effect
   window.addEventListener('scroll', () => {
     header.classList.toggle('scrolled', window.scrollY > 10);
   });
 
-  // Mobile menu drawer toggle
   const mobileToggle = document.getElementById('mobile-toggle-btn');
   const navLinks = document.getElementById('main-nav-links');
   if (mobileToggle) {
@@ -148,7 +124,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  // Header Auth button action (redirects to Login page or logs out)
   const authBtn = document.getElementById('nav-auth-btn');
   function updateAuthBtn() {
     const user = Session.currentUser;
@@ -167,7 +142,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
   
-  // Watch router navigate state to update Header buttons
   const originalNavigate = Router.navigate;
   Router.navigate = function(path, pushState) {
     originalNavigate.call(Router, path, pushState);
@@ -182,26 +156,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateFooterHash();
   };
 
-  // Sync DB data from Postgres Server
   await DB.init();
 
-  // Initialize router
   Router.init();
   updateAuthBtn();
 
-  // ═══════════════════════════════════════════════
-  // 4. PRE-FILL LEDGER WITH INITIAL DEMO TRANSACTION IF EMPTY
-  // ═══════════════════════════════════════════════
   const ledger = OcuChain.getChain();
   if (ledger.length === 0) {
-    // Populate with default catches
     DB.catches.forEach(c => {
       OcuChain.addEntry(c);
     });
     updateFooterHash();
   }
 
-  // Hide the loader smoothly
   const loader = document.getElementById('loading-screen');
   if (loader) {
     loader.classList.add('hidden');
