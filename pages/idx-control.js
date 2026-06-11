@@ -1,8 +1,3 @@
-/**
- * OcuCast — Экран Технадзора (idx-control, Cyber Dark Mode)
- * Подключается к Node.js API серверу (PostgreSQL).
- */
-
 window.IdxControlPage = function() {
   const container = document.createElement('div');
   container.className = 'page-content container fade-in';
@@ -12,7 +7,6 @@ window.IdxControlPage = function() {
   function render() {
     const chainStatus = OcuChain.verify();
     
-    // Console log lines
     let logLines = '';
     
     DB.antifrodLog.forEach(log => {
@@ -188,7 +182,6 @@ window.IdxControlPage = function() {
       </div>
     `;
 
-    // Events
     const gyroSlider = container.querySelector('#idx-gyro-sim');
     const gyroLine = container.querySelector('#gyro-indicator-line');
     const gyroVal = container.querySelector('#gyro-degree-val');
@@ -211,7 +204,6 @@ window.IdxControlPage = function() {
       }
     };
 
-    // Incident approve
     container.querySelectorAll('.btn-approve-incident').forEach(btn => {
       btn.onclick = async () => {
         const id = btn.getAttribute('data-id');
@@ -255,7 +247,6 @@ window.IdxControlPage = function() {
       };
     });
 
-    // Incident reject
     container.querySelectorAll('.btn-reject-incident').forEach(btn => {
       btn.onclick = async () => {
         const id = btn.getAttribute('data-id');
